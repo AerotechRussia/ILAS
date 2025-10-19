@@ -1,0 +1,30 @@
+# Example mission configuration for ILAS
+
+# Mission metadata
+name: "Test Mission - Waypoint Navigation"
+description: "Navigate through waypoints with obstacle avoidance and land"
+
+# Takeoff settings
+takeoff_altitude: 10.0  # meters
+
+# Waypoints (x, y, z in meters)
+waypoints:
+  - [0, 0, 10]      # Start position
+  - [10, 0, 10]     # Waypoint 1
+  - [10, 10, 10]    # Waypoint 2
+  - [0, 10, 10]     # Waypoint 3
+  - [0, 0, 5]       # Return and descend
+
+# Landing settings
+landing:
+  mode: terrain
+  search_radius: 15.0  # meters
+  min_score: 0.6
+
+# Safety settings
+safety:
+  max_altitude: 50.0
+  min_altitude: 2.0
+  emergency_descent_rate: 1.0
+  geofence_enabled: true
+  geofence_radius: 100.0

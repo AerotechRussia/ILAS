@@ -1,0 +1,39 @@
+# ILAS Configuration Example - ArduPilot Controller
+
+detection:
+  detection_range: 25.0
+  min_confidence: 0.65
+  sensors:
+    - type: lidar
+      enabled: true
+      fov: 360
+      max_range: 40.0
+    - type: radar
+      enabled: true
+      fov: 120
+      max_range: 50.0
+
+avoidance:
+  strategy: vector_field
+  safety_margin: 2.5
+  max_avoidance_distance: 12.0
+  avoidance_gain: 1.2
+  max_velocity: 8.0
+  max_acceleration: 3.0
+  prediction_time: 1.5
+
+landing:
+  landing_mode: precision
+  min_landing_size: [2.5, 2.5]
+  max_slope: 10.0
+  max_roughness: 0.2
+  descent_rate: 0.4
+  hover_height: 3.0
+
+controller:
+  controller_type: ardupilot
+  connection_string: /dev/ttyACM0
+  baud_rate: 115200
+  timeout: 5.0
+
+update_rate: 20.0

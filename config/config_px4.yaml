@@ -1,0 +1,43 @@
+# ILAS Configuration Example - PX4 Controller
+# This is an example configuration for ILAS with PX4 flight controller
+
+detection:
+  detection_range: 20.0  # meters
+  min_confidence: 0.6
+  sensors:
+    - type: lidar
+      enabled: true
+      fov: 360  # degrees
+      max_range: 30.0
+    - type: camera
+      enabled: true
+      fov: 90
+      resolution: [640, 480]
+    - type: ultrasonic
+      enabled: true
+      max_range: 5.0
+
+avoidance:
+  strategy: potential_field  # Options: potential_field, vector_field, dynamic_window, rrt
+  safety_margin: 2.0  # meters
+  max_avoidance_distance: 10.0
+  avoidance_gain: 1.0
+  max_velocity: 5.0  # m/s
+  max_acceleration: 2.0  # m/s^2
+  prediction_time: 1.0  # seconds
+
+landing:
+  landing_mode: terrain  # Options: precision, terrain, emergency, vertical, slope
+  min_landing_size: [2.0, 2.0]  # meters [width, depth]
+  max_slope: 15.0  # degrees
+  max_roughness: 0.3  # 0.0 to 1.0
+  descent_rate: 0.5  # m/s
+  hover_height: 2.0  # meters
+
+controller:
+  controller_type: px4  # Options: px4, ardupilot, dji, simulation
+  connection_string: /dev/ttyUSB0
+  baud_rate: 57600
+  timeout: 5.0  # seconds
+
+update_rate: 10.0  # Hz
