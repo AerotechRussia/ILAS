@@ -16,6 +16,7 @@ from .slam.slam_system import SLAMSystem
 from .terrain.terrain_mapper import TerrainMapper
 from .fusion.sensor_fusion import SensorFusionEKF
 from .mission.mission_planner import MissionPlanner
+from .safety.failsafe_manager import FailsafeManager
 
 
 class ILASCore:
@@ -41,6 +42,7 @@ class ILASCore:
         self.terrain_mapper = TerrainMapper(config.get('terrain_mapping', {}))
         self.sensor_fusion = SensorFusionEKF(config.get('sensor_fusion', {}))
         self.mission_planner = MissionPlanner(config.get('mission_planning', {}))
+        self.failsafe_manager = FailsafeManager(config.get('failsafe', {}))
         
         # Connect to the vehicle
         connection_string = config.get('connection_string', '127.0.0.1:14550')
@@ -281,6 +283,13 @@ class ILASCore:
                 slam_pose = self.slam.get_pose()
                 self.sensor_fusion.update(np.array([slam_pose[0], slam_pose[1], slam_pose[2]]), 'slam')
                 
+                # Check for failsafe conditions
+                failsafe_events = self.failsafe_manager.check_failsafes(telemetry)
+                if failsafe_events:
+                    print(f"Failsafe triggered: {failsafe_events}")
+                    self.emergency_land(sensor_data)
+                    return
+
                 nav_command, is_safe = self.navigate_to_target(target, sensor_data)
                 
                 if not is_safe:

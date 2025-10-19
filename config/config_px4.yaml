@@ -41,3 +41,11 @@ controller:
   timeout: 5.0  # seconds
 
 update_rate: 10.0  # Hz
+
+failsafe:
+  check_geofence: true
+  geofence:
+    - [0, 0]
+    - [100, 0]
+    - [100, 100]
+    - [0, 100]

@@ -37,3 +37,11 @@ controller:
   timeout: 5.0
 
 update_rate: 20.0
+
+failsafe:
+  check_geofence: true
+  geofence:
+    - [0, 0]
+    - [200, 0]
+    - [200, 200]
+    - [0, 200]
