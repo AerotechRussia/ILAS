@@ -106,11 +106,11 @@ class AvoidanceSystem:
                 is_safe = False
             
             # Apply repulsive force if within influence range
-            if distance < self.max_avoidance_distance and distance > 0:
+            if distance < self.max_avoidance_distance and distance > 0.1:
                 # Repulsive force inversely proportional to distance
                 magnitude = self.avoidance_gain * (
-                    1.0 / distance - 1.0 / self.max_avoidance_distance
-                ) / (distance ** 2)
+                    (1.0 / distance) - (1.0 / self.max_avoidance_distance)
+                )
                 
                 # Direction away from obstacle
                 direction = -to_obstacle / distance
@@ -119,6 +119,11 @@ class AvoidanceSystem:
         # Combine forces
         total_force = attractive_force + repulsive_force
         
+        # If the repulsive force is not strong enough to overcome the attractive force,
+        # then the path is not safe.
+        if np.linalg.norm(attractive_force) > np.linalg.norm(repulsive_force):
+            is_safe = False
+
         # Normalize
         force_magnitude = np.linalg.norm(total_force)
         if force_magnitude > 0:

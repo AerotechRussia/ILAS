@@ -11,6 +11,8 @@ from .detection.obstacle_detector import ObstacleDetector, Obstacle
 from .avoidance.avoidance_system import AvoidanceSystem
 from .landing.intelligent_landing import IntelligentLanding, LandingSite
 from .controllers.controller_manager import ControllerManager
+from .failsafe.modes import FailsafeManager, FailsafeMode
+from .utils.watchdog import Watchdog
 
 
 class ILASCore:
@@ -32,6 +34,12 @@ class ILASCore:
         self.avoidance = AvoidanceSystem(config.get('avoidance', {}))
         self.landing = IntelligentLanding(config.get('landing', {}))
         self.controller = ControllerManager(config.get('controller', {}))
+        self.failsafe = FailsafeManager(self.controller, config.get('failsafe', {}))
+
+        # Watchdogs
+        timeouts = config.get('timeouts', {})
+        self.controller_watchdog = Watchdog(timeouts.get('controller', 5.0))
+        self.sensor_watchdog = Watchdog(timeouts.get('sensor', 5.0))
         
         self.is_running = False
         self.current_mission = None
@@ -74,11 +82,13 @@ class ILASCore:
         """
         # Get current state
         telemetry = self.controller.get_telemetry()
+        self.controller_watchdog.reset()
         current_position = telemetry['position']
         current_velocity = telemetry['velocity']
         
         # Detect obstacles
         obstacles = self.detector.detect_obstacles(sensor_data)
+        self.sensor_watchdog.reset()
         
         # Calculate heading to target
         to_target = target_position - current_position
@@ -125,10 +135,12 @@ class ILASCore:
         """
         # Get current position
         telemetry = self.controller.get_telemetry()
+        self.controller_watchdog.reset()
         current_position = telemetry['position']
         
         # Detect obstacles
         obstacles = self.detector.detect_obstacles(sensor_data)
+        self.sensor_watchdog.reset()
         
         # Analyze landing area
         landing_sites = self.landing.analyze_landing_area(
@@ -235,6 +247,26 @@ class ILASCore:
         
         # Disarm
         self.controller.send_command('disarm', None)
+
+    def monitor_subsystems(self):
+        """Monitors the health of critical subsystems."""
+        if self.controller_watchdog.check():
+            print("Controller timeout detected!")
+            self.trigger_failsafe(FailsafeMode.HOLD_POSITION)
+
+        if self.sensor_watchdog.check():
+            print("Sensor timeout detected!")
+            self.trigger_failsafe(FailsafeMode.HOLD_POSITION)
+
+    def trigger_failsafe(self, mode: FailsafeMode, sensor_data: Dict = None):
+        """
+        Triggers a failsafe mode.
+
+        Args:
+            mode: The failsafe mode to trigger.
+            sensor_data: The current sensor data.
+        """
+        self.failsafe.activate_mode(mode, sensor_data)
     
     def get_system_status(self) -> Dict:
         """
