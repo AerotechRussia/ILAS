@@ -91,6 +91,10 @@ class FlightController(ABC):
         """Land the vehicle"""
         pass
 
+    def set_telemetry(self, telemetry: Dict[str, np.ndarray]):
+        """Set the telemetry data (for simulation)."""
+        pass
+
 
 class PX4Controller(FlightController):
     """PX4 flight controller interface"""
@@ -343,6 +347,12 @@ class SimulationController(FlightController):
         self.target_position = np.array([self.position[0], self.position[1], 0.0])
         return True
 
+    def set_telemetry(self, telemetry: Dict[str, np.ndarray]):
+        """Set the telemetry data for the simulation."""
+        self.position = telemetry.get('position', self.position)
+        self.velocity = telemetry.get('velocity', self.velocity)
+        self.attitude = telemetry.get('attitude', self.attitude)
+
 
 class ControllerManager:
     """
@@ -427,6 +437,11 @@ class ControllerManager:
         elif command_type == 'land':
             self.controller.land()
     
+    def set_telemetry(self, telemetry: Dict[str, np.ndarray]):
+        """Set the telemetry data (for simulation)."""
+        if self.controller:
+            self.controller.set_telemetry(telemetry)
+
     def is_connected(self) -> bool:
         """Check if controller is connected"""
         return self.controller is not None and self.controller.connected
