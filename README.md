@@ -4,13 +4,13 @@
 
 ## Features
 
-### 🚁 Obstacle Detection
+###  Obstacle Detection
 - Multi-sensor support (LiDAR, Camera, Ultrasonic, Radar, Depth Camera)
 - Real-time obstacle detection and tracking
 - Configurable detection range and confidence thresholds
 - Sensor fusion for improved accuracy
 
-### 🛡️ Obstacle Avoidance
+### Obstacle Avoidance
 - Multiple avoidance strategies:
   - Artificial Potential Field
   - Vector Field Histogram (VFH)
@@ -20,7 +20,7 @@
 - Real-time path planning
 - Dynamic obstacle handling
 
-### 🎯 Intelligent Landing
+###  Intelligent Landing
 - Automatic landing site analysis
 - Terrain evaluation (slope, roughness)
 - Multiple landing modes:
@@ -31,10 +31,9 @@
   - Slope landing
 - Trajectory planning for safe approach
 
-### 🎮 Controller Support
+###  Controller Support
 - **PX4** flight controller
 - **ArduPilot** flight controller
-- **DJI** flight controller
 - **Simulation mode** for testing
 - Extensible architecture for custom controllers
 
@@ -228,7 +227,7 @@ For licensing inquiries, contact: AerotechRussia
 
 ## Safety Notice
 
-⚠️ **IMPORTANT SAFETY NOTICE** ⚠️
+ **IMPORTANT SAFETY NOTICE** 
 
 This is an autonomous flight system. Always:
 - Test in simulation first
