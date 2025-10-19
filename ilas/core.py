@@ -11,6 +11,10 @@ from .detection.obstacle_detector import ObstacleDetector, Obstacle
 from .avoidance.avoidance_system import AvoidanceSystem
 from .landing.intelligent_landing import IntelligentLanding, LandingSite
 from .controllers.controller_manager import ControllerManager
+from .slam.slam_system import SLAMSystem
+from .terrain.terrain_mapper import TerrainMapper
+from .fusion.sensor_fusion import SensorFusionEKF
+from .mission.mission_planner import MissionPlanner
 
 
 class ILASCore:
@@ -32,6 +36,10 @@ class ILASCore:
         self.avoidance = AvoidanceSystem(config.get('avoidance', {}))
         self.landing = IntelligentLanding(config.get('landing', {}))
         self.controller = ControllerManager(config.get('controller', {}))
+        self.slam = SLAMSystem(config.get('slam', {}))
+        self.terrain_mapper = TerrainMapper(config.get('terrain_mapping', {}))
+        self.sensor_fusion = SensorFusionEKF(config.get('sensor_fusion', {}))
+        self.mission_planner = MissionPlanner(config.get('mission_planning', {}))
         
         self.is_running = False
         self.current_mission = None
@@ -72,10 +80,10 @@ class ILASCore:
         Returns:
             Tuple of (navigation_command, is_safe)
         """
-        # Get current state
-        telemetry = self.controller.get_telemetry()
-        current_position = telemetry['position']
-        current_velocity = telemetry['velocity']
+        # Get the fused state
+        fused_state = self.sensor_fusion.get_state()
+        current_position = fused_state[0:3]
+        current_velocity = fused_state[3:6]
         
         # Detect obstacles
         obstacles = self.detector.detect_obstacles(sensor_data)
@@ -123,9 +131,16 @@ class ILASCore:
         Returns:
             True if landing successful
         """
-        # Get current position
-        telemetry = self.controller.get_telemetry()
-        current_position = telemetry['position']
+        # Get the fused state
+        fused_state = self.sensor_fusion.get_state()
+        current_position = fused_state[0:3]
+
+        # Update Terrain Mapper with the latest sensor data and fused pose
+        pose = (
+            current_position[0], current_position[1], current_position[2],
+            fused_state[9], fused_state[10], fused_state[11] # roll, pitch, yaw
+        )
+        self.terrain_mapper.update(sensor_data, pose)
         
         # Detect obstacles
         obstacles = self.detector.detect_obstacles(sensor_data)
@@ -134,6 +149,7 @@ class ILASCore:
         landing_sites = self.landing.analyze_landing_area(
             landing_area_center,
             search_radius,
+            terrain_mapper=self.terrain_mapper,
             obstacles=obstacles
         )
         
@@ -172,8 +188,9 @@ class ILASCore:
         Args:
             sensor_data: Current sensor readings
         """
-        telemetry = self.controller.get_telemetry()
-        current_position = telemetry['position']
+        # Get the fused state
+        fused_state = self.sensor_fusion.get_state()
+        current_position = fused_state[0:3]
         
         # Detect obstacles
         obstacles = self.detector.detect_obstacles(sensor_data)
@@ -204,26 +221,66 @@ class ILASCore:
         takeoff_altitude = mission_config.get('takeoff_altitude', 10.0)
         self.controller.send_command('takeoff', takeoff_altitude)
         
-        # Navigate through waypoints
-        for waypoint in waypoints:
-            target = np.array(waypoint)
+        # Generate an initial mission plan
+        fused_state = self.sensor_fusion.get_state()
+        current_position = fused_state[0:3]
+        goal_position = np.array(waypoints[-1])
+        map_data = {'map': self.slam.get_map()}
+        mission_plan = self.mission_planner.generate_plan(current_position, goal_position, map_data)
+
+        # Navigate through the planned waypoints
+        last_update_time = time.time()
+        while mission_plan:
+            target = mission_plan[0]
             
             # Navigate with obstacle avoidance
             while True:
-                # Get sensor data (placeholder)
-                sensor_data = {}
+                # Calculate dt
+                current_time = time.time()
+                dt = current_time - last_update_time
+                last_update_time = current_time
+
+                # Predict the next state
+                self.sensor_fusion.predict(dt)
+
+                # Get sensor data
+                sensor_data = {} # Placeholder
+                telemetry = self.controller.get_telemetry()
+
+                # Update with IMU data
+                imu_data = np.concatenate([telemetry['acceleration'], telemetry['attitude']])
+                self.sensor_fusion.update(imu_data, 'imu')
+
+                # Update with GPS data
+                if 'position' in telemetry:
+                    self.sensor_fusion.update(telemetry['position'], 'gps')
+
+                # Update with SLAM data
+                slam_pose = self.slam.get_pose()
+                self.sensor_fusion.update(np.array([slam_pose[0], slam_pose[1], slam_pose[2]]), 'slam')
                 
                 nav_command, is_safe = self.navigate_to_target(target, sensor_data)
                 
                 if not is_safe:
                     print("Warning: Unsafe conditions detected")
                 
+                fused_state = self.sensor_fusion.get_state()
+                current_position = fused_state[0:3]
+
+                # Adapt the plan if necessary
+                map_data = {'map': self.slam.get_map()}
+                new_plan = self.mission_planner.adapt_plan(mission_plan, current_position, map_data)
+                if new_plan:
+                    mission_plan = new_plan
+                    break # Restart the inner loop with the new plan
+
                 # Check if reached waypoint
-                telemetry = self.controller.get_telemetry()
-                distance = np.linalg.norm(telemetry['position'] - target)
+                distance = np.linalg.norm(current_position - target)
                 
                 if distance < 1.0:
-                    break
+                    mission_plan.pop(0) # Move to the next waypoint
+                    if not mission_plan:
+                        break # Mission complete
                 
                 # Send navigation command
                 self.controller.send_command('velocity', nav_command)
