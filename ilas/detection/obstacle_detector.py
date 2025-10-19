@@ -70,15 +70,10 @@ class ObstacleDetector:
         """
         obstacles = []
         
-        for sensor_type_str, data in sensor_data.items():
-            try:
-                sensor_type = SensorType(sensor_type_str)
-                if sensor_type in self.sensors:
-                    detected = self._process_sensor_data(sensor_type, data)
-                    obstacles.extend(detected)
-            except ValueError:
-                # Ignore unknown sensor types
-                pass
+        for sensor_type, data in sensor_data.items():
+            if sensor_type in self.sensors:
+                detected = self._process_sensor_data(sensor_type, data)
+                obstacles.extend(detected)
                 
         # Filter by confidence and merge close obstacles
         obstacles = self._filter_obstacles(obstacles)
@@ -110,35 +105,27 @@ class ObstacleDetector:
     def _process_lidar(self, data: np.ndarray) -> List[Obstacle]:
         """Process LiDAR point cloud data"""
         obstacles = []
-        if len(data) < 3:
+
+        # Simple clustering algorithm for point cloud
+        if len(data) == 0:
             return obstacles
-
-        # Density-based clustering
-        from scipy.spatial import cKDTree
-        tree = cKDTree(data)
-        clusters = tree.query_ball_tree(tree, r=0.5)
-
-        processed_indices = set()
-        for i, cluster_indices in enumerate(clusters):
-            if i in processed_indices:
-                continue
             
-            if len(cluster_indices) < 3:
+        # Group points by distance and angle
+        for i in range(0, len(data), 10):
+            cluster = data[i:i+10]
+            if len(cluster) < 3:
                 continue
 
-            cluster = data[cluster_indices]
-            mean_pos = np.mean(cluster, axis=0)
+            # Calculate cluster properties
+            mean_pos = np.mean(cluster[:, :3], axis=0)
             distance = np.linalg.norm(mean_pos)
 
             if distance <= self.detection_range:
-                size = np.max(cluster, axis=0) - np.min(cluster, axis=0)
+                size = np.max(cluster[:, :3], axis=0) - np.min(cluster[:, :3], axis=0)
                 confidence = min(1.0, len(cluster) / 10.0)
                 
                 obstacle = Obstacle(mean_pos, size, distance, confidence)
                 obstacles.append(obstacle)
-
-            for index in cluster_indices:
-                processed_indices.add(index)
                 
         return obstacles
     

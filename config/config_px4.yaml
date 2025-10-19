@@ -36,17 +36,8 @@ landing:
 
 controller:
   controller_type: px4  # Options: px4, ardupilot, dji, simulation
-  connection_string: tcp:127.0.0.1:5760 # SITL connection
+  connection_string: /dev/ttyUSB0
   baud_rate: 57600
   timeout: 5.0  # seconds
 
 update_rate: 10.0  # Hz
-
-failsafe:
-  return_to_base_altitude: 30.0
-  hold_position_duration: 60.0
-  emergency_descent_rate: 1.0
-
-timeouts:
-  controller: 5.0
-  sensor: 5.0

@@ -58,7 +58,7 @@ class IntelligentLanding:
     def analyze_landing_area(self,
                             center_position: np.ndarray,
                             search_radius: float,
-                            terrain_mapper: 'TerrainMapper',
+                            terrain_data: Optional[np.ndarray] = None,
                             obstacles: Optional[List[Obstacle]] = None) -> List[LandingSite]:
         """
         Analyze area and find suitable landing sites
@@ -66,7 +66,7 @@ class IntelligentLanding:
         Args:
             center_position: Center of search area [x, y, z]
             search_radius: Radius to search in meters
-            terrain_mapper: The terrain mapper object
+            terrain_data: Optional height map of terrain
             obstacles: Optional list of detected obstacles
             
         Returns:
@@ -74,51 +74,158 @@ class IntelligentLanding:
         """
         landing_sites = []
         
-        # Use the terrain mapper to find suitable landing sites
-        terrain_map = terrain_mapper.get_terrain_map()
-
-        # This is a placeholder for a more sophisticated analysis of the terrain map.
-        # For now, we'll just create a single landing site at the center of the search area
-        # and score it using the terrain mapper.
-
-        suitability = terrain_mapper.get_landing_suitability(center_position, search_radius)
-
-        if suitability > 0.5: # Some threshold
-            site = LandingSite(
-                position=center_position,
-                size=np.array(self.min_landing_size),
-                slope=0.0, # Placeholder
-                roughness=0.0, # Placeholder
-                score=suitability
+        if terrain_data is not None:
+            landing_sites = self._analyze_terrain(
+                center_position, search_radius, terrain_data
             )
-            landing_sites.append(site)
+        else:
+            # Use obstacle-free regions
+            landing_sites = self._analyze_free_space(
+                center_position, search_radius, obstacles or []
+            )
         
         # Sort by score
         landing_sites.sort(key=lambda x: x.score, reverse=True)
         
         return landing_sites
     
+    def _analyze_terrain(self,
+                        center_position: np.ndarray,
+                        search_radius: float,
+                        terrain_data: np.ndarray) -> List[LandingSite]:
+        """Analyze terrain height map for landing sites"""
+        sites = []
+
+        # Grid search for flat areas
+        grid_resolution = 0.5  # meters
+        num_points = int(2 * search_radius / grid_resolution)
+
+        for i in range(num_points):
+            for j in range(num_points):
+                x = center_position[0] - search_radius + i * grid_resolution
+                y = center_position[1] - search_radius + j * grid_resolution
+
+                # Extract local patch
+                patch_size = max(int(self.min_landing_size[0] / grid_resolution), 3)
+
+                if i + patch_size >= num_points or j + patch_size >= num_points:
+                    continue
+
+                # Calculate terrain properties
+                patch = terrain_data[i:i+patch_size, j:j+patch_size]
+
+                # Calculate slope
+                slope = self._calculate_slope(patch, grid_resolution)
+
+                # Calculate roughness
+                roughness = self._calculate_roughness(patch)
+
+                # Check if suitable
+                if slope <= self.max_slope and roughness <= self.max_roughness:
+                    # Calculate score
+                    score = self._calculate_landing_score(
+                        np.array([x, y, np.mean(patch)]),
+                        center_position,
+                        slope,
+                        roughness
+                    )
+
+                    site = LandingSite(
+                        position=np.array([x, y, np.mean(patch)]),
+                        size=np.array(self.min_landing_size),
+                        slope=slope,
+                        roughness=roughness,
+                        score=score
+                    )
+                    sites.append(site)
+
+        return sites
+
+    def _analyze_free_space(self,
+                           center_position: np.ndarray,
+                           search_radius: float,
+                           obstacles: List[Obstacle]) -> List[LandingSite]:
+        """Find flat obstacle-free areas for landing"""
+        sites = []
+
+        # Grid search
+        grid_resolution = 1.0
+        num_points = int(2 * search_radius / grid_resolution)
+
+        for i in range(num_points):
+            for j in range(num_points):
+                x = center_position[0] - search_radius + i * grid_resolution
+                y = center_position[1] - search_radius + j * grid_resolution
+                z = center_position[2]  # Assume ground level
+
+                candidate_pos = np.array([x, y, z])
+
+                # Check if area is free of obstacles
+                is_clear = self._check_area_clear(
+                    candidate_pos,
+                    self.min_landing_size,
+                    obstacles
+                )
+
+                if is_clear:
+                    # Calculate score based on distance from center
+                    distance = np.linalg.norm(candidate_pos[:2] - center_position[:2])
+                    score = 1.0 - (distance / search_radius)
+
+                    site = LandingSite(
+                        position=candidate_pos,
+                        size=np.array(self.min_landing_size),
+                        slope=0.0,
+                        roughness=0.0,
+                        score=score
+                    )
+                    sites.append(site)
+
+        return sites
+
     def _check_area_clear(self,
                          position: np.ndarray,
                          size: List[float],
                          obstacles: List[Obstacle]) -> bool:
         """Check if area is clear of obstacles"""
-        if not obstacles:
-            return True
-        
-        obstacle_positions = np.array([o.position for o in obstacles])
-        obstacle_sizes = np.array([o.size for o in obstacles])
-        
-        dx = np.abs(obstacle_positions[:, 0] - position[0])
-        dy = np.abs(obstacle_positions[:, 1] - position[1])
-        
-        clearance_x = (size[0] + obstacle_sizes[:, 0]) / 2 + 1.0
-        clearance_y = (size[1] + obstacle_sizes[:, 1]) / 2 + 1.0
-        
-        if np.any((dx < clearance_x) & (dy < clearance_y)):
-            return False
-        
+        for obstacle in obstacles:
+            # Check if obstacle overlaps with landing area
+            dx = abs(obstacle.position[0] - position[0])
+            dy = abs(obstacle.position[1] - position[1])
+
+            clearance_x = (size[0] + obstacle.size[0]) / 2 + 1.0  # 1m safety margin
+            clearance_y = (size[1] + obstacle.size[1]) / 2 + 1.0
+
+            if dx < clearance_x and dy < clearance_y:
+                return False
+
         return True
+
+    def _calculate_slope(self, height_map: np.ndarray, resolution: float) -> float:
+        """Calculate average slope of terrain patch in degrees"""
+        if height_map.shape[0] < 2 or height_map.shape[1] < 2:
+            return 0.0
+        
+        # Calculate gradients
+        grad_x = np.gradient(height_map, axis=1) / resolution
+        grad_y = np.gradient(height_map, axis=0) / resolution
+        
+        # Calculate slope magnitude
+        slope_rad = np.arctan(np.sqrt(grad_x**2 + grad_y**2))
+        slope_deg = np.degrees(np.mean(slope_rad))
+        
+        return slope_deg
+
+    def _calculate_roughness(self, height_map: np.ndarray) -> float:
+        """Calculate terrain roughness (0.0 = smooth, 1.0 = very rough)"""
+        if height_map.size < 2:
+            return 0.0
+        
+        # Standard deviation of heights normalized
+        std = np.std(height_map)
+        roughness = min(std / 0.5, 1.0)  # Normalize to 0-1
+        
+        return roughness
     
     def _calculate_landing_score(self,
                                  site_position: np.ndarray,
@@ -229,17 +336,12 @@ class IntelligentLanding:
         
         # Sample path
         num_samples = int(distance / 0.5) + 1
-        points = start + direction * np.linspace(0, distance, num_samples)[:, np.newaxis]
-
-        if obstacles:
-            obstacle_positions = np.array([o.position for o in obstacles])
-
-            # Calculate distances from all points to all obstacles
-            diffs = points[:, np.newaxis, :] - obstacle_positions[np.newaxis, :, :]
-            distances = np.linalg.norm(diffs, axis=2)
+        for i in range(num_samples):
+            point = start + direction * (i * distance / num_samples)
             
-            if np.any(distances < 2.0):
-                return False
+            for obstacle in obstacles:
+                if np.linalg.norm(point - obstacle.position) < 2.0:
+                    return False
         
         return True
     
