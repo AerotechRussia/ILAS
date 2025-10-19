@@ -283,6 +283,13 @@ class ILASCore:
                 slam_pose = self.slam.get_pose()
                 self.sensor_fusion.update(np.array([slam_pose[0], slam_pose[1], slam_pose[2]]), 'slam')
                 
+                # Check for failsafe conditions
+                failsafe_events = self.failsafe_manager.check_failsafes(telemetry)
+                if failsafe_events:
+                    print(f"Failsafe triggered: {failsafe_events}")
+                    self.emergency_land(sensor_data)
+                    return
+
                 nav_command, is_safe = self.navigate_to_target(target, sensor_data)
                 
                 if not is_safe:
