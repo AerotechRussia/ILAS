@@ -41,3 +41,14 @@ controller:
   timeout: 5.0  # seconds
 
 update_rate: 10.0  # Hz
+
+geofence:
+  enabled: true
+  min_altitude: 5.0
+  max_altitude: 100.0
+  # Polygon points defining the horizontal boundary [[x1, y1], [x2, y2], ...]
+  polygon_points:
+    - [0, 0]
+    - [100, 0]
+    - [100, 100]
+    - [0, 100]
