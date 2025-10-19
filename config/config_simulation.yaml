@@ -33,10 +33,19 @@ controller:
 
 update_rate: 10.0
 
-failsafe:
-  check_geofence: true
-  geofence:
-    - [-100, -100]
-    - [100, -100]
-    - [100, 100]
-    - [-100, 100]
+geofence:
+  enabled: true
+  inclusion_zones:
+    - polygon_points:
+        - [-100, -100]
+        - [100, -100]
+        - [100, 100]
+        - [-100, 100]
+      min_altitude: 0.0
+      max_altitude: 50.0
+  exclusion_zones:
+    - polygon_points:
+        - [10, 10]
+        - [20, 10]
+        - [20, 20]
+        - [10, 20]
