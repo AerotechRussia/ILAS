@@ -96,25 +96,28 @@ class AvoidanceSystem:
         # Repulsive forces from obstacles
         repulsive_force = np.zeros(3)
         is_safe = True
-        
-        for obstacle in obstacles:
-            to_obstacle = obstacle.position - drone_position
-            distance = np.linalg.norm(to_obstacle)
-            
-            # Check if too close
-            if distance < self.safety_margin:
+
+        if obstacles:
+            obstacle_positions = np.array([o.position for o in obstacles])
+            to_obstacles = obstacle_positions - drone_position
+            distances = np.linalg.norm(to_obstacles, axis=1)
+
+            # Check safety
+            if np.any(distances < self.safety_margin):
                 is_safe = False
-            
-            # Apply repulsive force if within influence range
-            if distance < self.max_avoidance_distance and distance > 0.1:
-                # Repulsive force inversely proportional to distance
+
+            # Calculate repulsive forces for obstacles within range
+            in_range = (distances < self.max_avoidance_distance) & (distances > 0)
+            if np.any(in_range):
+                distances_in_range = distances[in_range]
+                to_obstacles_in_range = to_obstacles[in_range]
+
                 magnitude = self.avoidance_gain * (
-                    (1.0 / distance) - (1.0 / self.max_avoidance_distance)
-                )
+                    1.0 / distances_in_range - 1.0 / self.max_avoidance_distance
+                ) / (distances_in_range ** 2)
                 
-                # Direction away from obstacle
-                direction = -to_obstacle / distance
-                repulsive_force += magnitude * direction
+                direction = -to_obstacles_in_range / distances_in_range[:, np.newaxis]
+                repulsive_force = np.sum(magnitude[:, np.newaxis] * direction, axis=0)
         
         # Combine forces
         total_force = attractive_force + repulsive_force
@@ -147,23 +150,29 @@ class AvoidanceSystem:
         histogram = np.zeros(num_sectors)
         
         is_safe = True
-        
-        # Populate histogram with obstacle densities
-        for obstacle in obstacles:
-            to_obstacle = obstacle.position - drone_position
-            distance = np.linalg.norm(to_obstacle)
-            
-            if distance < self.safety_margin:
+
+        if obstacles:
+            obstacle_positions = np.array([o.position for o in obstacles])
+            obstacle_confidences = np.array([o.confidence for o in obstacles])
+            to_obstacles = obstacle_positions - drone_position
+            distances = np.linalg.norm(to_obstacles, axis=1)
+
+            # Check safety
+            if np.any(distances < self.safety_margin):
                 is_safe = False
-            
-            if distance > 0 and distance < self.max_avoidance_distance:
-                # Calculate angle in horizontal plane
-                angle = np.arctan2(to_obstacle[1], to_obstacle[0])
-                sector = int((angle + np.pi) / (2 * np.pi) * num_sectors) % num_sectors
+
+            # Populate histogram with obstacle densities
+            in_range = (distances > 0) & (distances < self.max_avoidance_distance)
+            if np.any(in_range):
+                to_obstacles_in_range = to_obstacles[in_range]
+                distances_in_range = distances[in_range]
+                confidences_in_range = obstacle_confidences[in_range]
+
+                angles = np.arctan2(to_obstacles_in_range[:, 1], to_obstacles_in_range[:, 0])
+                sectors = ((angles + np.pi) / (2 * np.pi) * num_sectors).astype(int) % num_sectors
                 
-                # Add obstacle magnitude to histogram
-                magnitude = obstacle.confidence * (1.0 - distance / self.max_avoidance_distance)
-                histogram[sector] += magnitude
+                magnitudes = confidences_in_range * (1.0 - distances_in_range / self.max_avoidance_distance)
+                np.add.at(histogram, sectors, magnitudes)
         
         # Find direction to target
         to_target = target_position - drone_position
@@ -213,14 +222,27 @@ class AvoidanceSystem:
         dt = self.config.get('prediction_time', 1.0)
         
         # Sample velocities within dynamic window
-        num_samples = 20
+        num_samples = 10 # Reduced number of samples
         best_velocity = drone_velocity
         best_score = float('-inf')
         is_safe = True
         
-        for vx in np.linspace(-max_vel, max_vel, num_samples):
-            for vy in np.linspace(-max_vel, max_vel, num_samples):
-                for vz in np.linspace(-max_vel/2, max_vel/2, num_samples//2):
+        # Intelligent sampling around current velocity and target direction
+        to_target = target_position - drone_position
+        target_dir = to_target / (np.linalg.norm(to_target) + 1e-6)
+
+        vx_samples = np.linspace(drone_velocity[0] - max_accel * dt, drone_velocity[0] + max_accel * dt, num_samples)
+        vy_samples = np.linspace(drone_velocity[1] - max_accel * dt, drone_velocity[1] + max_accel * dt, num_samples)
+        vz_samples = np.linspace(drone_velocity[2] - max_accel * dt, drone_velocity[2] + max_accel * dt, num_samples // 2)
+
+        # Add target direction to samples
+        vx_samples = np.append(vx_samples, drone_velocity[0] + target_dir[0] * max_accel * dt)
+        vy_samples = np.append(vy_samples, drone_velocity[1] + target_dir[1] * max_accel * dt)
+        vz_samples = np.append(vz_samples, drone_velocity[2] + target_dir[2] * max_accel * dt)
+
+        for vx in vx_samples:
+            for vy in vy_samples:
+                for vz in vz_samples:
                     velocity = np.array([vx, vy, vz])
                     
                     # Check if achievable given acceleration limits
@@ -231,19 +253,15 @@ class AvoidanceSystem:
                     # Predict trajectory
                     predicted_pos = drone_position + velocity * dt
                     
-                    # Check collision
-                    collision = False
-                    min_distance = float('inf')
-                    
-                    for obstacle in obstacles:
-                        dist = np.linalg.norm(predicted_pos - obstacle.position)
-                        min_distance = min(min_distance, dist)
-                        if dist < self.safety_margin:
-                            collision = True
-                            break
-                    
-                    if collision:
-                        continue
+                    # Vectorized collision check
+                    if obstacles:
+                        obstacle_positions = np.array([o.position for o in obstacles])
+                        distances = np.linalg.norm(predicted_pos - obstacle_positions, axis=1)
+                        min_distance = np.min(distances)
+                        if min_distance < self.safety_margin:
+                            continue
+                    else:
+                        min_distance = float('inf')
                     
                     # Score this velocity
                     # Prefer: heading to target, high clearance, smooth motion
