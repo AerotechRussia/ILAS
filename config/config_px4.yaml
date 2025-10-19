@@ -36,7 +36,7 @@ landing:
 
 controller:
   controller_type: px4  # Options: px4, ardupilot, dji, simulation
-  connection_string: /dev/ttyUSB0
+  connection_string: tcp:127.0.0.1:5760 # SITL connection
   baud_rate: 57600
   timeout: 5.0  # seconds
 

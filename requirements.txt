@@ -8,3 +8,4 @@ pyyaml>=5.4.0
 # dronekit>=2.9.0       # For enhanced MAVLink support
 # pyserial>=3.5         # For serial communication
 # matplotlib>=3.3.0     # For visualization
+dronekit
