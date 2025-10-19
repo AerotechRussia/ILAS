@@ -16,7 +16,7 @@ from .slam.slam_system import SLAMSystem
 from .terrain.terrain_mapper import TerrainMapper
 from .fusion.sensor_fusion import SensorFusionEKF
 from .mission.mission_planner import MissionPlanner
-from .safety.failsafe_manager import FailsafeManager
+from .geofence.geofence_manager import GeofenceManager
 
 
 class ILASCore:
@@ -42,7 +42,7 @@ class ILASCore:
         self.terrain_mapper = TerrainMapper(config.get('terrain_mapping', {}))
         self.sensor_fusion = SensorFusionEKF(config.get('sensor_fusion', {}))
         self.mission_planner = MissionPlanner(config.get('mission_planning', {}))
-        self.failsafe_manager = FailsafeManager(config.get('failsafe', {}))
+        self.geofence_manager = GeofenceManager(config.get('geofence', {}))
         
         # Connect to the vehicle
         connection_string = config.get('connection_string', '127.0.0.1:14550')
@@ -313,6 +313,12 @@ class ILASCore:
                     if not mission_plan:
                         break # Mission complete
                 
+                # Check for geofence breach
+                if not self.geofence_manager.is_within_geofence(current_position):
+                    print("Geofence breached! Initiating emergency landing.")
+                    self.emergency_land(sensor_data)
+                    return
+
                 # Send navigation command
                 self.controller.send_command('velocity', nav_command)
                 time.sleep(1.0 / self.update_rate)
