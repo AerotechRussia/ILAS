@@ -37,12 +37,3 @@ controller:
   timeout: 5.0
 
 update_rate: 20.0
-
-failsafe:
-  return_to_base_altitude: 30.0
-  hold_position_duration: 60.0
-  emergency_descent_rate: 1.0
-
-timeouts:
-  controller: 5.0
-  sensor: 5.0

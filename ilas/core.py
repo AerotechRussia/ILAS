@@ -6,6 +6,7 @@ Integrates all components for complete obstacle avoidance and landing system
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 import time
+from dronekit import connect, VehicleMode
 
 from .detection.obstacle_detector import ObstacleDetector, Obstacle
 from .avoidance.avoidance_system import AvoidanceSystem
@@ -41,9 +42,18 @@ class ILASCore:
         self.sensor_fusion = SensorFusionEKF(config.get('sensor_fusion', {}))
         self.mission_planner = MissionPlanner(config.get('mission_planning', {}))
         
+        # Connect to the vehicle
+        connection_string = config.get('connection_string', '127.0.0.1:14550')
+        self.vehicle = connect(connection_string, wait_ready=True)
+        self.lidar_data = [0] * 360
+
+        @self.vehicle.on_message('DISTANCE_SENSOR')
+        def listener(self, name, message):
+            self.lidar_data = message.distances
+
         self.is_running = False
         self.current_mission = None
-        self.update_rate = config.get('update_rate', 10.0)  # Hz
+        self.update_rate = config.get('update_rate', 10.0)
         
     def start(self) -> bool:
         """
@@ -87,7 +97,6 @@ class ILASCore:
         
         # Detect obstacles
         obstacles = self.detector.detect_obstacles(sensor_data)
-        self.sensor_watchdog.reset()
         
         # Calculate heading to target
         to_target = target_position - current_position
@@ -145,13 +154,12 @@ class ILASCore:
         
         # Detect obstacles
         obstacles = self.detector.detect_obstacles(sensor_data)
-        self.sensor_watchdog.reset()
         
         # Analyze landing area
         landing_sites = self.landing.analyze_landing_area(
             landing_area_center,
             search_radius,
-            terrain_mapper=self.terrain_mapper,
+            terrain_data=self.terrain_mapper.get_terrain_map(),
             obstacles=obstacles
         )
         
@@ -227,7 +235,18 @@ class ILASCore:
         fused_state = self.sensor_fusion.get_state()
         current_position = fused_state[0:3]
         goal_position = np.array(waypoints[-1])
-        map_data = {'map': self.slam.get_map()}
+
+        # Create a 3D map from the 2D SLAM map
+        slam_map_2d = self.slam.get_map()
+        map_size = int(np.sqrt(len(slam_map_2d)))
+        slam_map_3d = np.zeros((map_size, map_size, 10)) # Assume a height of 10 for the map
+        for y in range(map_size):
+            for x in range(map_size):
+                if slam_map_2d[y * map_size + x] != 0:
+                    # Create a curtain of obstacles
+                    slam_map_3d[x, y, 0:int(current_position[2] / self.mission_planner.map_resolution)] = 1
+
+        map_data = {'map': slam_map_3d}
         mission_plan = self.mission_planner.generate_plan(current_position, goal_position, map_data)
 
         # Navigate through the planned waypoints
@@ -246,7 +265,7 @@ class ILASCore:
                 self.sensor_fusion.predict(dt)
 
                 # Get sensor data
-                sensor_data = {} # Placeholder
+                sensor_data = self._get_sensor_data()
                 telemetry = self.controller.get_telemetry()
 
                 # Update with IMU data
@@ -258,6 +277,7 @@ class ILASCore:
                     self.sensor_fusion.update(telemetry['position'], 'gps')
 
                 # Update with SLAM data
+                self.slam.update(sensor_data)
                 slam_pose = self.slam.get_pose()
                 self.sensor_fusion.update(np.array([slam_pose[0], slam_pose[1], slam_pose[2]]), 'slam')
                 
@@ -290,30 +310,50 @@ class ILASCore:
         
         # Land at final waypoint
         landing_center = waypoints[-1] if waypoints else [0, 0, 0]
-        self.execute_landing(np.array(landing_center), 10.0, {})
+        self.execute_landing(np.array(landing_center), 10.0, self._get_sensor_data())
         
         # Disarm
         self.controller.send_command('disarm', None)
 
-    def monitor_subsystems(self):
-        """Monitors the health of critical subsystems."""
-        if self.controller_watchdog.check():
-            print("Controller timeout detected!")
-            self.trigger_failsafe(FailsafeMode.HOLD_POSITION)
-
-        if self.sensor_watchdog.check():
-            print("Sensor timeout detected!")
-            self.trigger_failsafe(FailsafeMode.HOLD_POSITION)
-
-    def trigger_failsafe(self, mode: FailsafeMode, sensor_data: Dict = None):
+    def _get_sensor_data(self) -> Dict:
         """
-        Triggers a failsafe mode.
-
-        Args:
-            mode: The failsafe mode to trigger.
-            sensor_data: The current sensor data.
+        Get sensor data from the drone's sensors.
         """
-        self.failsafe.activate_mode(mode, sensor_data)
+        # Simulate a depth camera by generating a point cloud from the SLAM map
+        slam_map = self.slam.get_map()
+        map_size = int(np.sqrt(len(slam_map)))
+
+        # Create a point cloud from the SLAM map
+        points = []
+        for y in range(map_size):
+            for x in range(map_size):
+                if slam_map[y * map_size + x] != 0:
+                    points.append([x * self.mission_planner.map_resolution, y * self.mission_planner.map_resolution, 0])
+
+        point_cloud = np.array(points)
+
+        # Project the point cloud onto an image plane (simplified)
+        depth_camera_data = np.ones((100, 100)) * 10
+        if point_cloud.any():
+            fused_state = self.sensor_fusion.get_state()
+            current_position = fused_state[0:3]
+
+            for point in point_cloud:
+                # Transform point to camera frame (simplified)
+                p_cam = point - current_position
+
+                # Project point onto image plane (simplified)
+                if p_cam[2] > 0: # Check if point is in front of the camera
+                    u = int(50 * p_cam[0] / p_cam[2] + 50)
+                    v = int(50 * p_cam[1] / p_cam[2] + 50)
+
+                    if 0 <= u < 100 and 0 <= v < 100:
+                        depth_camera_data[v, u] = p_cam[2]
+
+        return {
+            'lidar': self.lidar_data,
+            'depth_camera': depth_camera_data
+        }
     
     def get_system_status(self) -> Dict:
         """

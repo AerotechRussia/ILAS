@@ -20,13 +20,22 @@ class SensorFusionEKF:
 
     def predict(self, dt):
         """
-        Predict the next state of the drone.
+        Predict the next state of the drone using a constant acceleration model.
 
         Args:
             dt (float): The time step.
         """
-        # State transition matrix (placeholder)
+        # State transition matrix for a constant acceleration model
         F = np.eye(12)
+        F[0, 3] = dt
+        F[1, 4] = dt
+        F[2, 5] = dt
+        F[3, 6] = dt
+        F[4, 7] = dt
+        F[5, 8] = dt
+        F[0, 6] = 0.5 * dt**2
+        F[1, 7] = 0.5 * dt**2
+        F[2, 8] = 0.5 * dt**2
 
         self.state = F @ self.state
         self.P = F @ self.P @ F.T + self.Q
@@ -40,7 +49,7 @@ class SensorFusionEKF:
             sensor_type (str): The type of sensor (e.g., 'gps', 'imu', 'slam').
         """
         if sensor_type == 'gps':
-            # GPS measurement model (placeholder)
+            # GPS measurement model (position)
             H = np.zeros((3, 12))
             H[0, 0] = 1
             H[1, 1] = 1
@@ -49,7 +58,7 @@ class SensorFusionEKF:
             self.R = np.eye(3) * 0.5 # GPS noise
 
         elif sensor_type == 'imu':
-            # IMU measurement model (placeholder)
+            # IMU measurement model (acceleration and attitude)
             H = np.zeros((6, 12))
             H[0, 6] = 1
             H[1, 7] = 1
@@ -61,11 +70,11 @@ class SensorFusionEKF:
             self.R = np.eye(6) * 0.1 # IMU noise
 
         elif sensor_type == 'slam':
-            # SLAM measurement model (placeholder)
+            # SLAM measurement model (x, y, yaw)
             H = np.zeros((3, 12))
             H[0, 0] = 1
             H[1, 1] = 1
-            H[2, 11] = 1 # x, y, yaw from SLAM
+            H[2, 11] = 1
 
             self.R = np.eye(3) * 0.2 # SLAM noise
 
