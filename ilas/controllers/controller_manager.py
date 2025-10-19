@@ -8,6 +8,16 @@ from typing import Dict, Optional, Any
 from enum import Enum
 from abc import ABC, abstractmethod
 
+try:
+    from dronekit import connect, VehicleMode, LocationGlobalRelative, APIException
+    import time
+except ImportError:
+    print("Warning: dronekit not installed. PX4 and ArduPilot support will be unavailable.")
+    connect = None
+    VehicleMode = None
+    LocationGlobalRelative = None
+    APIException = None
+
 
 class ControllerType(Enum):
     """Supported flight controller types"""
@@ -81,96 +91,125 @@ class FlightController(ABC):
         """Land the vehicle"""
         pass
 
+    def set_telemetry(self, telemetry: Dict[str, np.ndarray]):
+        """Set the telemetry data (for simulation)."""
+        pass
+
 
 class PX4Controller(FlightController):
     """PX4 flight controller interface"""
     
     def __init__(self, config: Dict):
         super().__init__(config)
-        self.connection_string = config.get('connection_string', '/dev/ttyUSB0')
+        if not connect:
+            raise ImportError("dronekit is not installed. Please install it with 'pip install dronekit'")
+        self.connection_string = config.get('connection_string', 'udp:127.0.0.1:14550')
         self.baud_rate = config.get('baud_rate', 57600)
         self.vehicle = None
         
     def connect(self) -> bool:
-        """Connect to PX4 via MAVLink"""
+        """Connect to PX4 via MAVLink using DroneKit"""
         try:
-            # In real implementation, use pymavlink or dronekit
-            # from dronekit import connect
-            # self.vehicle = connect(self.connection_string, baud=self.baud_rate)
+            print(f"Connecting to vehicle on: {self.connection_string}")
+            self.vehicle = connect(self.connection_string, wait_ready=True, baud=self.baud_rate, heartbeat_timeout=30)
             self.connected = True
+            print("PX4 connected successfully")
             return True
-        except Exception as e:
+        except APIException as e:
             print(f"PX4 connection failed: {e}")
             return False
-    
+        except Exception as e:
+            print(f"An unexpected error occurred during PX4 connection: {e}")
+            return False
+
     def disconnect(self):
         """Disconnect from PX4"""
         if self.vehicle:
-            # self.vehicle.close()
+            self.vehicle.close()
             self.vehicle = None
         self.connected = False
+        print("PX4 disconnected")
     
     def get_position(self) -> np.ndarray:
-        """Get current position from PX4"""
-        if not self.connected:
+        """Get current position (lat, lon, alt) from PX4"""
+        if not self.connected or not self.vehicle:
             return np.zeros(3)
-        # Return from self.vehicle.location.global_relative_frame
-        return np.array([0.0, 0.0, 0.0])
+        loc = self.vehicle.location.global_relative_frame
+        return np.array([loc.lat, loc.lon, loc.alt])
     
     def get_velocity(self) -> np.ndarray:
-        """Get current velocity from PX4"""
-        if not self.connected:
+        """Get current velocity [vx, vy, vz] from PX4"""
+        if not self.connected or not self.vehicle:
             return np.zeros(3)
-        # Return from self.vehicle.velocity
-        return np.array([0.0, 0.0, 0.0])
+        return np.array(self.vehicle.velocity)
     
     def get_attitude(self) -> np.ndarray:
-        """Get current attitude from PX4"""
-        if not self.connected:
+        """Get current attitude [roll, pitch, yaw] from PX4"""
+        if not self.connected or not self.vehicle:
             return np.zeros(3)
-        # Return from self.vehicle.attitude
-        return np.array([0.0, 0.0, 0.0])
+        att = self.vehicle.attitude
+        return np.array([att.roll, att.pitch, att.yaw])
     
     def set_target_position(self, position: np.ndarray):
         """Send position setpoint to PX4"""
-        if not self.connected:
+        if not self.connected or not self.vehicle:
             return
-        # Use MAVLink SET_POSITION_TARGET_LOCAL_NED message
-        pass
-    
+
+        lat, lon, alt = position
+        target_location = LocationGlobalRelative(lat, lon, alt)
+        self.vehicle.simple_goto(target_location)
+
     def set_target_velocity(self, velocity: np.ndarray):
         """Send velocity setpoint to PX4"""
-        if not self.connected:
-            return
-        # Use MAVLink SET_POSITION_TARGET_LOCAL_NED message with velocity
+        # DroneKit does not directly support velocity control in the same way as position.
+        # This would require sending MAVLink messages directly.
+        # For simplicity, this is not fully implemented here.
+        print("Velocity control not fully implemented for PX4 via DroneKit in this version.")
         pass
     
     def arm(self) -> bool:
         """Arm PX4"""
-        if not self.connected:
+        if not self.connected or not self.vehicle:
             return False
-        # self.vehicle.armed = True
-        return True
+
+        self.vehicle.mode = VehicleMode("GUIDED")
+        self.vehicle.armed = True
+
+        # Wait for arming to complete
+        for _ in range(10): # 10 seconds timeout
+            if self.vehicle.armed:
+                return True
+            time.sleep(1)
+        return False
     
     def disarm(self) -> bool:
         """Disarm PX4"""
-        if not self.connected:
+        if not self.connected or not self.vehicle:
             return False
-        # self.vehicle.armed = False
+
+        self.vehicle.armed = False
         return True
     
     def takeoff(self, altitude: float) -> bool:
         """Takeoff with PX4"""
-        if not self.connected:
+        if not self.connected or not self.vehicle or not self.vehicle.armed:
             return False
-        # self.vehicle.simple_takeoff(altitude)
+
+        self.vehicle.simple_takeoff(altitude)
+
+        # Wait until the vehicle reaches a safe altitude
+        while True:
+            if self.vehicle.location.global_relative_frame.alt >= altitude * 0.95:
+                break
+            time.sleep(1)
         return True
     
     def land(self) -> bool:
         """Land with PX4"""
-        if not self.connected:
+        if not self.connected or not self.vehicle:
             return False
-        # Set mode to LAND
+
+        self.vehicle.mode = VehicleMode("LAND")
         return True
 
 
@@ -308,6 +347,12 @@ class SimulationController(FlightController):
         self.target_position = np.array([self.position[0], self.position[1], 0.0])
         return True
 
+    def set_telemetry(self, telemetry: Dict[str, np.ndarray]):
+        """Set the telemetry data for the simulation."""
+        self.position = telemetry.get('position', self.position)
+        self.velocity = telemetry.get('velocity', self.velocity)
+        self.attitude = telemetry.get('attitude', self.attitude)
+
 
 class ControllerManager:
     """
@@ -392,6 +437,11 @@ class ControllerManager:
         elif command_type == 'land':
             self.controller.land()
     
+    def set_telemetry(self, telemetry: Dict[str, np.ndarray]):
+        """Set the telemetry data (for simulation)."""
+        if self.controller:
+            self.controller.set_telemetry(telemetry)
+
     def is_connected(self) -> bool:
         """Check if controller is connected"""
         return self.controller is not None and self.controller.connected

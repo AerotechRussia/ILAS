@@ -122,6 +122,11 @@ class AvoidanceSystem:
         # Combine forces
         total_force = attractive_force + repulsive_force
         
+        # If the repulsive force is not strong enough to overcome the attractive force,
+        # then the path is not safe.
+        if np.linalg.norm(attractive_force) > np.linalg.norm(repulsive_force):
+            is_safe = False
+
         # Normalize
         force_magnitude = np.linalg.norm(total_force)
         if force_magnitude > 0:
