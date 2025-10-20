@@ -52,3 +52,8 @@ geofence:
     - [100, 0]
     - [100, 100]
     - [0, 100]
+
+person_detection:
+  model_path: "models/yolo5_fullDS_native.pt"
+  confidence_threshold: 0.5
+  device: "cpu"  # "cpu" or "cuda:0"

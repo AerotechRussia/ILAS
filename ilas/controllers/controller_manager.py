@@ -6,6 +6,7 @@ Supports various flight controllers (PX4, ArduPilot, etc.)
 import numpy as np
 from typing import Dict, Optional, Any
 from enum import Enum
+import cv2
 from abc import ABC, abstractmethod
 
 
@@ -79,6 +80,11 @@ class FlightController(ABC):
     @abstractmethod
     def land(self) -> bool:
         """Land the vehicle"""
+        pass
+
+    @abstractmethod
+    def get_camera_image(self) -> Optional[np.ndarray]:
+        """Get image from camera"""
         pass
 
 
@@ -173,6 +179,25 @@ class PX4Controller(FlightController):
         # Set mode to LAND
         return True
 
+    def get_camera_image(self) -> Optional[np.ndarray]:
+        """Get image from camera using OpenCV"""
+        if not hasattr(self, 'cap'):
+            # GStreamer pipeline for camera
+            pipeline = (
+                "udpsrc port=5600 ! "
+                "application/x-rtp, encoding-name=H264, payload=96 ! "
+                "rtph264depay ! h264parse ! avdec_h264 ! "
+                "decodebin ! videoconvert ! video/x-raw,format=(string)BGR ! "
+                "appsink"
+            )
+            self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+
+        if self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if ret:
+                return frame
+        return None
+
 
 class ArduPilotController(FlightController):
     """ArduPilot flight controller interface"""
@@ -234,6 +259,25 @@ class ArduPilotController(FlightController):
     def land(self) -> bool:
         """Land"""
         return True
+
+    def get_camera_image(self) -> Optional[np.ndarray]:
+        """Get image from camera using OpenCV"""
+        if not hasattr(self, 'cap'):
+            # GStreamer pipeline for camera
+            pipeline = (
+                "udpsrc port=5600 ! "
+                "application/x-rtp, encoding-name=H264, payload=96 ! "
+                "rtph264depay ! h264parse ! avdec_h264 ! "
+                "decodebin ! videoconvert ! video/x-raw,format=(string)BGR ! "
+                "appsink"
+            )
+            self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+
+        if self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if ret:
+                return frame
+        return None
 
 
 class SimulationController(FlightController):
@@ -307,6 +351,10 @@ class SimulationController(FlightController):
         """Simulate landing"""
         self.target_position = np.array([self.position[0], self.position[1], 0.0])
         return True
+
+    def get_camera_image(self) -> Optional[np.ndarray]:
+        """Get simulated camera image"""
+        return np.zeros((480, 640, 3), dtype=np.uint8)
 
 
 class ControllerManager:

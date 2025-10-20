@@ -6,9 +6,12 @@ Integrates all components for complete obstacle avoidance and landing system
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 import time
+import threading
+import cv2
 from dronekit import connect, VehicleMode
 
 from .detection.obstacle_detector import ObstacleDetector, Obstacle
+from .detection.person_detector import PersonDetector
 from .avoidance.avoidance_system import AvoidanceSystem
 from .landing.intelligent_landing import IntelligentLanding, LandingSite
 from .controllers.controller_manager import ControllerManager
@@ -17,6 +20,8 @@ from .terrain.terrain_mapper import TerrainMapper
 from .fusion.sensor_fusion import SensorFusionEKF
 from .mission.mission_planner import MissionPlanner
 from .geofence.geofence_manager import GeofenceManager
+from .search.grid import generate_search_grid
+from .search.mapping import SearchMapping
 
 
 class ILASCore:
@@ -35,6 +40,7 @@ class ILASCore:
         
         # Initialize components
         self.detector = ObstacleDetector(config.get('detection', {}))
+        self.person_detector = PersonDetector(config.get('person_detection', {}))
         self.avoidance = AvoidanceSystem(config.get('avoidance', {}))
         self.landing = IntelligentLanding(config.get('landing', {}))
         self.controller = ControllerManager(config.get('controller', {}))
@@ -56,6 +62,8 @@ class ILASCore:
         self.is_running = False
         self.current_mission = None
         self.update_rate = config.get('update_rate', 10.0)
+        self.detected_persons = []
+        self._person_detection_thread = None
         
     def start(self) -> bool:
         """
@@ -70,6 +78,13 @@ class ILASCore:
             return False
         
         self.is_running = True
+
+        # Start person detection thread
+        self._person_detection_thread = threading.Thread(
+            target=self._person_detection_loop, daemon=True
+        )
+        self._person_detection_thread.start()
+
         print("ILAS system started successfully")
         return True
     
@@ -330,6 +345,57 @@ class ILASCore:
         # Disarm
         self.controller.send_command('disarm', None)
 
+    def run_search_mission(self, search_area: List[float], altitude: float, overlap: float):
+        """
+        Run a search and rescue mission
+
+        Args:
+            search_area: [min_x, min_y, max_x, max_y]
+            altitude: Flight altitude
+            overlap: Overlap between camera footprints
+        """
+        print("Starting search and rescue mission...")
+
+        # Generate search grid
+        waypoints = generate_search_grid(search_area, altitude, overlap)
+
+        # Initialize search map
+        search_map = SearchMapping(search_area)
+
+        # Arm and takeoff
+        self.controller.send_command('arm', None)
+        self.controller.send_command('takeoff', altitude)
+
+        # Fly the search pattern
+        for i, waypoint in enumerate(waypoints):
+            print(f"Navigating to waypoint {i+1}/{len(waypoints)}: {waypoint}")
+
+            # Navigate to waypoint
+            while np.linalg.norm(self.controller.get_telemetry()['position'] - waypoint) > 1.0:
+                nav_command, is_safe = self.navigate_to_target(waypoint, self._get_sensor_data())
+                self.controller.send_command('velocity', nav_command)
+
+                # Update map
+                search_map.update_path(self.controller.get_telemetry()['position'])
+                for person in self.detected_persons:
+                    search_map.add_detection(person)
+
+                # Generate map periodically
+                if i % 10 == 0:
+                    search_map.generate_map('search_map.png')
+
+                time.sleep(1.0 / self.update_rate)
+
+        print("Search mission complete.")
+
+        # Land
+        self.controller.send_command('land', None)
+        self.controller.send_command('disarm', None)
+
+        # Final map
+        search_map.generate_map('search_map_final.png')
+        print("Final search map saved to search_map_final.png")
+
     def _get_sensor_data(self) -> Dict:
         """
         Get sensor data from the drone's sensors.
@@ -381,5 +447,29 @@ class ILASCore:
             'is_running': self.is_running,
             'controller_connected': self.controller.is_connected(),
             'current_mission': self.current_mission,
-            'telemetry': self.controller.get_telemetry()
+            'telemetry': self.controller.get_telemetry(),
+            'detected_persons': self.detected_persons,
         }
+
+    def _person_detection_loop(self):
+        """
+        Main loop for person detection
+        """
+        while self.is_running:
+            image = self.controller.get_camera_image()
+            if image is not None:
+                # Detect persons
+                persons = self.person_detector.detect(image)
+                if persons:
+                    timestamp = time.time()
+                    telemetry = self.controller.get_telemetry()
+                    for p in persons:
+                        self.detected_persons.append(
+                            {
+                                'timestamp': timestamp,
+                                'position': telemetry['position'],
+                                'bounding_box': p,
+                            }
+                        )
+            # Control loop rate
+            time.sleep(0.1)

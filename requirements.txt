@@ -4,8 +4,10 @@ pyyaml>=5.4.0
 shapely>=1.8.0
 
 # Optional dependencies
-# opencv-python>=4.5.0  # For camera support
+opencv-python>=4.5.0  # For camera support
+torch>=1.9.0
+torchvision>=0.10.0
 # pymavlink>=2.4.0      # For PX4/ArduPilot support
 # dronekit>=2.9.0       # For enhanced MAVLink support
 # pyserial>=3.5         # For serial communication
-# matplotlib>=3.3.0     # For visualization
+matplotlib>=3.3.0     # For visualization

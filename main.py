@@ -25,7 +25,7 @@ def main():
     parser.add_argument(
         '--mode',
         type=str,
-        choices=['mission', 'test', 'interactive'],
+        choices=['mission', 'test', 'interactive', 'search'],
         default='interactive',
         help='Operation mode'
     )
@@ -33,6 +33,24 @@ def main():
         '--mission',
         type=str,
         help='Path to mission file (for mission mode)'
+    )
+    parser.add_argument(
+        '--search_area',
+        type=float,
+        nargs=4,
+        help='Search area bounds [min_x, min_y, max_x, max_y]'
+    )
+    parser.add_argument(
+        '--altitude',
+        type=float,
+        default=20.0,
+        help='Search altitude in meters'
+    )
+    parser.add_argument(
+        '--overlap',
+        type=float,
+        default=0.3,
+        help='Camera footprint overlap (0.0 to 1.0)'
     )
     
     args = parser.parse_args()
@@ -79,6 +97,18 @@ def main():
             print("Running test scenario...")
             run_test_scenario(ilas)
             
+        elif args.mode == 'search':
+            # Run search and rescue mission
+            if not args.search_area:
+                print("Search area required for search mode")
+                sys.exit(1)
+
+            ilas.run_search_mission(
+                args.search_area,
+                args.altitude,
+                args.overlap
+            )
+
         else:  # interactive
             # Interactive mode
             print("Entering interactive mode...")
