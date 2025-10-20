@@ -1,14 +1,14 @@
 """
 Failsafe Manager for ILAS
-Monitors system health and triggers failsafe procedures
+Monitors critical system parameters and triggers failsafe procedures
 """
 
-from typing import Dict, List
-import numpy as np
+from typing import Dict, List, Any
+from ..geofence.geofence_manager import GeofenceManager
 
 class FailsafeManager:
     """
-    Monitors system health and triggers failsafe procedures
+    Manages failsafe checks and triggers
     """
 
     def __init__(self, config: Dict):
@@ -19,66 +19,94 @@ class FailsafeManager:
             config: Failsafe configuration
         """
         self.config = config
-        self.geofence = self._parse_geofence(config.get('geofence', []))
+        self.failsafe_checks = [
+            self._check_battery,
+            self._check_gps,
+            self._check_controller_link,
+            self._check_geofence,
+        ]
+        geofence_config = {
+            'enabled': config.get('check_geofence', False),
+            'polygon_points': config.get('geofence', []),
+        }
+        self.geofence_manager = GeofenceManager(geofence_config)
 
     def check_failsafes(self, telemetry: Dict) -> List[str]:
         """
-        Check all failsafe conditions
+        Run all failsafe checks
 
         Args:
-            telemetry: Current telemetry data
+            telemetry: Current drone telemetry
 
         Returns:
             List of triggered failsafe events
         """
         triggered_events = []
 
-        if self.config.get('check_geofence', False):
-            if not self._is_within_geofence(telemetry.get('position', np.zeros(3))):
-                triggered_events.append('geofence_breached')
+        for check_func in self.failsafe_checks:
+            event = check_func(telemetry)
+            if event:
+                triggered_events.append(event)
 
         return triggered_events
 
-    def _parse_geofence(self, geofence_points: List[List[float]]) -> np.ndarray:
+    def _check_battery(self, telemetry: Dict) -> str:
         """
-        Parse geofence points from configuration
+        Check for low battery
 
         Args:
-            geofence_points: List of [lat, lon] points
+            telemetry: Current drone telemetry
 
         Returns:
-            Numpy array of geofence points
+            'low_battery' if failsafe triggered, else None
         """
-        return np.array(geofence_points)
+        min_battery = self.config.get('min_battery_level', 20.0)
+        if 'battery' in telemetry and telemetry['battery'] < min_battery:
+            return 'low_battery'
+        return None
 
-    def _is_within_geofence(self, position: np.ndarray) -> bool:
+    def _check_gps(self, telemetry: Dict) -> str:
         """
-        Check if position is within the defined geofence using the Ray Casting algorithm.
+        Check for GPS signal loss
 
         Args:
-            position: Current position [x, y, z] (only x and y are used)
+            telemetry: Current drone telemetry
 
         Returns:
-            True if within geofence
+            'gps_loss' if failsafe triggered, else None
         """
-        if self.geofence.shape[0] < 3:
-            # A polygon needs at least 3 vertices
-            return True # No valid geofence defined
+        min_satellites = self.config.get('min_gps_satellites', 6)
+        if 'gps_satellites' in telemetry and telemetry['gps_satellites'] < min_satellites:
+            return 'gps_loss'
+        return None
 
-        x, y = position[0], position[1]
-        n = len(self.geofence)
-        inside = False
+    def _check_controller_link(self, telemetry: Dict) -> str:
+        """
+        Check for controller link loss
 
-        p1x, p1y = self.geofence[0]
-        for i in range(n + 1):
-            p2x, p2y = self.geofence[i % n]
-            if y > min(p1y, p2y):
-                if y <= max(p1y, p2y):
-                    if x <= max(p1x, p2x):
-                        if p1y != p2y:
-                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
-                        if p1x == p2x or x <= xinters:
-                            inside = not inside
-            p1x, p1y = p2x, p2y
+        Args:
+            telemetry: Current drone telemetry
 
-        return inside
+        Returns:
+            'controller_link_loss' if failsafe triggered, else None
+        """
+        # This is a placeholder - actual implementation depends on controller
+        if 'last_heartbeat' in telemetry and telemetry['last_heartbeat'] > 5.0:
+            return 'controller_link_loss'
+        return None
+
+    def _check_geofence(self, telemetry: Dict) -> str:
+        """
+        Check for geofence breach
+
+        Args:
+            telemetry: Current drone telemetry
+
+        Returns:
+            'geofence_breached' if failsafe triggered, else None
+        """
+        if self.config.get('check_geofence', False):
+            if 'position' in telemetry and not self.geofence_manager.is_within_geofence(telemetry['position']):
+                return 'geofence_breached'
+        return None
+
