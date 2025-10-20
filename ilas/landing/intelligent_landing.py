@@ -59,7 +59,8 @@ class IntelligentLanding:
                             center_position: np.ndarray,
                             search_radius: float,
                             terrain_data: Optional[np.ndarray] = None,
-                            obstacles: Optional[List[Obstacle]] = None) -> List[LandingSite]:
+                            obstacles: Optional[List[Obstacle]] = None,
+                            semantic_map: Optional[np.ndarray] = None) -> List[LandingSite]:
         """
         Analyze area and find suitable landing sites
         
@@ -68,6 +69,7 @@ class IntelligentLanding:
             search_radius: Radius to search in meters
             terrain_data: Optional height map of terrain
             obstacles: Optional list of detected obstacles
+            semantic_map: Optional semantic segmentation map
             
         Returns:
             List of potential landing sites sorted by score
@@ -76,7 +78,7 @@ class IntelligentLanding:
         
         if terrain_data is not None:
             landing_sites = self._analyze_terrain(
-                center_position, search_radius, terrain_data
+                center_position, search_radius, terrain_data, semantic_map
             )
         else:
             # Use obstacle-free regions
@@ -92,7 +94,8 @@ class IntelligentLanding:
     def _analyze_terrain(self,
                         center_position: np.ndarray,
                         search_radius: float,
-                        terrain_data: np.ndarray) -> List[LandingSite]:
+                        terrain_data: np.ndarray,
+                        semantic_map: Optional[np.ndarray] = None) -> List[LandingSite]:
         """Analyze terrain height map for landing sites"""
         sites = []
 
@@ -122,12 +125,23 @@ class IntelligentLanding:
 
                 # Check if suitable
                 if slope <= self.max_slope and roughness <= self.max_roughness:
+                    # Calculate semantic safety score
+                    semantic_safety_score = 1.0
+                    if semantic_map is not None:
+                        # Assuming semantic_map has the same resolution as terrain_data
+                        semantic_patch = semantic_map[i:i+patch_size, j:j+patch_size]
+                        # 0 is the background class, which we consider safe
+                        safe_pixels = np.sum(semantic_patch == 0)
+                        total_pixels = semantic_patch.size
+                        semantic_safety_score = safe_pixels / total_pixels if total_pixels > 0 else 0
+
                     # Calculate score
                     score = self._calculate_landing_score(
                         np.array([x, y, np.mean(patch)]),
                         center_position,
                         slope,
-                        roughness
+                        roughness,
+                        semantic_safety_score
                     )
 
                     site = LandingSite(
@@ -231,7 +245,8 @@ class IntelligentLanding:
                                  site_position: np.ndarray,
                                  target_position: np.ndarray,
                                  slope: float,
-                                 roughness: float) -> float:
+                                 roughness: float,
+                                 semantic_safety_score: float = 1.0) -> float:
         """Calculate overall landing site score"""
         # Distance penalty
         distance = np.linalg.norm(site_position - target_position)
@@ -248,7 +263,7 @@ class IntelligentLanding:
             0.4 * distance_score +
             0.4 * slope_score +
             0.2 * roughness_score
-        )
+        ) * semantic_safety_score
         
         return max(0.0, min(1.0, total_score))
     

@@ -12,6 +12,7 @@ from dronekit import connect, VehicleMode
 
 from .detection.obstacle_detector import ObstacleDetector, Obstacle
 from .detection.person_detector import PersonDetector
+from .detection.semantic_detector import SemanticDetector
 from .avoidance.avoidance_system import AvoidanceSystem
 from .landing.intelligent_landing import IntelligentLanding, LandingSite
 from .controllers.controller_manager import ControllerManager
@@ -45,6 +46,7 @@ class ILASCore:
         # Initialize components
         self.detector = ObstacleDetector(config.get('detection', {}))
         self.person_detector = PersonDetector(config.get('person_detection', {}))
+        self.semantic_detector = SemanticDetector(config.get('semantic_detection', {}))
         self.avoidance = AvoidanceSystem(config.get('avoidance', {}))
         self.landing = IntelligentLanding(config.get('landing', {}))
         self.controller = ControllerManager(config.get('controller', {}))
@@ -72,6 +74,8 @@ class ILASCore:
         self.update_rate = config.get('update_rate', 10.0)
         self.detected_persons = []
         self._person_detection_thread = None
+        self.semantic_segmentation_map = None
+        self._semantic_detection_thread = None
         
     def start(self) -> bool:
         """
@@ -92,6 +96,12 @@ class ILASCore:
             target=self._person_detection_loop, daemon=True
         )
         self._person_detection_thread.start()
+
+        # Start semantic detection thread
+        self._semantic_detection_thread = threading.Thread(
+            target=self._semantic_detection_loop, daemon=True
+        )
+        self._semantic_detection_thread.start()
 
         print("ILAS system started successfully")
         return True
@@ -187,7 +197,8 @@ class ILASCore:
             landing_area_center,
             search_radius,
             terrain_data=self.terrain_mapper.get_terrain_map(),
-            obstacles=obstacles
+            obstacles=obstacles,
+            semantic_map=self.semantic_segmentation_map
         )
         
         # Select best site
@@ -464,6 +475,18 @@ class ILASCore:
             'telemetry': self.controller.get_telemetry(),
             'detected_persons': self.detected_persons,
         }
+
+    def _semantic_detection_loop(self):
+        """
+        Main loop for semantic detection
+        """
+        while self.is_running:
+            image = self.controller.get_camera_image()
+            if image is not None:
+                # Get semantic segmentation map
+                self.semantic_segmentation_map = self.semantic_detector.detect(image)
+            # Control loop rate
+            time.sleep(0.5)
 
     def _person_detection_loop(self):
         """
