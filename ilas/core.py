@@ -22,6 +22,10 @@ from .mission.mission_planner import MissionPlanner
 from .geofence.geofence_manager import GeofenceManager
 from .search.grid import generate_search_grid
 from .search.mapping import SearchMapping
+from .safety.failsafe_manager import FailsafeManager
+from .stabilization.wind_estimator import WindEstimator
+from .landing.versatile_landing import VersatileLanding
+from .avoidance.improved_avoidance import ImprovedAvoidance
 
 
 class ILASCore:
@@ -49,6 +53,10 @@ class ILASCore:
         self.sensor_fusion = SensorFusionEKF(config.get('sensor_fusion', {}))
         self.mission_planner = MissionPlanner(config.get('mission_planning', {}))
         self.geofence_manager = GeofenceManager(config.get('geofence', {}))
+        self.failsafe_manager = FailsafeManager(config.get('failsafe', {}))
+        self.wind_estimator = WindEstimator(config.get('wind_estimation', {}))
+        self.versatile_landing = VersatileLanding(config.get('landing', {}))
+        self.improved_avoidance = ImprovedAvoidance(config.get('avoidance', {}))
         
         # Connect to the vehicle
         connection_string = config.get('connection_string', '127.0.0.1:14550')
@@ -130,18 +138,20 @@ class ILASCore:
             current_position, heading, safety_distance=5.0
         )
         
+        # Wind compensation
+        wind_compensation = -self.wind_estimator.wind_estimate
+
         # Calculate avoidance vector if needed
         if critical_obstacles:
-            avoidance_vector, is_safe = self.avoidance.calculate_avoidance_vector(
+            avoidance_vector, is_safe = self.improved_avoidance.navigate(
                 current_position,
                 target_position,
-                current_velocity,
                 obstacles
             )
-            return avoidance_vector, is_safe
+            return avoidance_vector + wind_compensation, is_safe
         else:
             # No obstacles, proceed directly
-            return heading, True
+            return heading + wind_compensation, True
     
     def execute_landing(self,
                        landing_area_center: np.ndarray,
@@ -190,10 +200,11 @@ class ILASCore:
         print(f"Selected landing site: {best_site}")
         
         # Plan landing trajectory
-        waypoints = self.landing.plan_landing_trajectory(
-            current_position,
+        vehicle_type = self.config.get('vehicle_type', 'multicopter')
+        waypoints = self.versatile_landing.plan_landing(
+            vehicle_type,
             best_site,
-            obstacles
+            current_position
         )
         
         # Execute landing by following waypoints
@@ -298,6 +309,9 @@ class ILASCore:
                 slam_pose = self.slam.get_pose()
                 self.sensor_fusion.update(np.array([slam_pose[0], slam_pose[1], slam_pose[2]]), 'slam')
                 
+                # Update wind estimate
+                self.wind_estimator.update(telemetry)
+
                 # Check for failsafe conditions
                 failsafe_events = self.failsafe_manager.check_failsafes(telemetry)
                 if failsafe_events:
