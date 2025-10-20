@@ -17,6 +17,14 @@ class AvoidanceStrategy(Enum):
     DYNAMIC_WINDOW = "dynamic_window"
     RRT = "rrt"  # Rapidly-exploring Random Tree
     BEBOP = "bebop"  # Best Effort Bug-based Obstacle Planner
+    HYBRID = "hybrid"
+
+
+class AvoidanceState(Enum):
+    """Finite states for the avoidance system"""
+    DIRECT = "direct"
+    AVOIDING = "avoiding"
+    CIRCLING = "circling"
 
 
 class AvoidanceSystem:
@@ -37,6 +45,12 @@ class AvoidanceSystem:
         self.safety_margin = config.get('safety_margin', 2.0)  # meters
         self.max_avoidance_distance = config.get('max_avoidance_distance', 10.0)
         self.avoidance_gain = config.get('avoidance_gain', 1.0)
+
+        # State machine
+        self.state = AvoidanceState.DIRECT
+        self.circling_start_position = None
+        self.circling_obstacle = None
+        self.circling_direction = 1  # 1 for clockwise, -1 for counter-clockwise
         
     def calculate_avoidance_vector(self, 
                                   drone_position: np.ndarray,
@@ -71,10 +85,82 @@ class AvoidanceSystem:
             return self._rrt_avoidance(
                 drone_position, target_position, obstacles
             )
+        elif self.strategy == AvoidanceStrategy.HYBRID:
+            return self._hybrid_avoidance(
+                drone_position, target_position, obstacles
+            )
         else:
             return self._potential_field_avoidance(
                 drone_position, target_position, obstacles
             )
+
+    def _hybrid_avoidance(self,
+                          drone_position: np.ndarray,
+                          target_position: np.ndarray,
+                          obstacles: List[Obstacle]) -> Tuple[np.ndarray, bool]:
+        """
+        State-machine based hybrid avoidance strategy.
+        """
+        # Find closest obstacle
+        closest_obstacle = None
+        min_dist = float('inf')
+        if obstacles:
+            for obs in obstacles:
+                dist = np.linalg.norm(drone_position - obs.position)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_obstacle = obs
+
+        # --- State Machine Logic ---
+        path_is_clear = self.check_path_clear(drone_position, target_position, obstacles)
+
+        # State: DIRECT
+        if self.state == AvoidanceState.DIRECT:
+            if closest_obstacle and min_dist < self.max_avoidance_distance:
+                self.state = AvoidanceState.AVOIDING
+            else:
+                to_target = target_position - drone_position
+                return to_target / (np.linalg.norm(to_target) + 1e-6), True
+
+        # State: AVOIDING
+        if self.state == AvoidanceState.AVOIDING:
+            if path_is_clear and min_dist > self.max_avoidance_distance:
+                self.state = AvoidanceState.DIRECT
+                to_target = target_position - drone_position
+                return to_target / (np.linalg.norm(to_target) + 1e-6), True
+            elif not path_is_clear and closest_obstacle:
+                # If we are not making progress, start circling
+                to_target_dir = (target_position - drone_position) / (np.linalg.norm(target_position - drone_position) + 1e-6)
+                avoid_vec, _ = self._potential_field_avoidance(drone_position, target_position, obstacles)
+                if np.dot(to_target_dir, avoid_vec) < 0.3: # Check if avoidance is pushing us away from target
+                    self.state = AvoidanceState.CIRCLING
+                    self.circling_obstacle = closest_obstacle
+                    self.circling_start_position = drone_position
+                    # Determine circling direction
+                    to_obs = closest_obstacle.position - drone_position
+                    cross_product_z = np.cross(to_target_dir[:2], to_obs[:2])
+                    self.circling_direction = 1 if cross_product_z > 0 else -1
+
+        # State: CIRCLING
+        if self.state == AvoidanceState.CIRCLING:
+            if path_is_clear:
+                self.state = AvoidanceState.DIRECT
+                self.circling_obstacle = None
+                to_target = target_position - drone_position
+                return to_target / (np.linalg.norm(to_target) + 1e-6), True
+
+            # Check if we've been circling for too long or returned to start
+            if self.circling_start_position is not None and np.linalg.norm(drone_position - self.circling_start_position) < 1.0:
+                # Fallback: reverse direction to try and unstick
+                self.circling_direction *= -1
+                self.circling_start_position = None # Avoid rapid flipping
+
+            return self._circling_avoidance(drone_position, target_position, obstacles)
+
+        # Default behavior for AVOIDING state
+        return self._potential_field_avoidance(
+            drone_position, target_position, obstacles
+        )
     
     def _potential_field_avoidance(self,
                                    drone_position: np.ndarray,
@@ -300,6 +386,45 @@ class AvoidanceSystem:
         # Simplified RRT - just return potential field for now
         # Full RRT implementation would be too slow for real-time
         return self._potential_field_avoidance(drone_position, target_position, obstacles)
+
+    def _circling_avoidance(self,
+                              drone_position: np.ndarray,
+                              target_position: np.ndarray,
+                              obstacles: List[Obstacle]) -> Tuple[np.ndarray, bool]:
+        """
+        Follows the boundary of an obstacle to navigate around it.
+        """
+        if self.circling_obstacle is None:
+            # Fallback to potential field if no obstacle is being circled
+            return self._potential_field_avoidance(drone_position, target_position, obstacles)
+
+        obstacle_pos = self.circling_obstacle.position
+        to_obstacle = obstacle_pos - drone_position
+        dist_to_obstacle = np.linalg.norm(to_obstacle)
+
+        # Vector pointing from obstacle to drone
+        radial_vector = -to_obstacle / (dist_to_obstacle + 1e-6)
+
+        # Tangential vector for circling (2D for now)
+        tangential_vector_2d = np.array([-radial_vector[1], radial_vector[0]]) * self.circling_direction
+        tangential_vector = np.append(tangential_vector_2d, 0)
+
+        # Force to maintain safe distance
+        distance_error = dist_to_obstacle - (self.safety_margin + self.circling_obstacle.size[0] / 2)
+        correction_force = radial_vector * distance_error * 0.5
+
+        # Attraction to target
+        to_target = target_position - drone_position
+        attractive_force = to_target / (np.linalg.norm(to_target) + 1e-6)
+
+        # Combine forces: tangential, correction, and attraction
+        combined_vector = tangential_vector + correction_force + attractive_force * 0.3
+
+        avoidance_vector = combined_vector / (np.linalg.norm(combined_vector) + 1e-6)
+
+        is_safe = dist_to_obstacle > self.safety_margin
+
+        return avoidance_vector, is_safe
     
     def check_path_clear(self,
                         start_position: np.ndarray,
