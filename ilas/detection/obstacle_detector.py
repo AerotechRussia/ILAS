@@ -49,6 +49,7 @@ class ObstacleDetector:
         self.detection_range = config.get('detection_range', 20.0)  # meters
         self.min_confidence = config.get('min_confidence', 0.6)
         self.obstacle_buffer = []
+        self._obstacle_log_file = config.get('obstacle_log_file', 'obstacle_log.txt')
         self._initialize_sensors()
         
     def _initialize_sensors(self):
@@ -70,8 +71,9 @@ class ObstacleDetector:
         """
         obstacles = []
         
-        for sensor_type, data in sensor_data.items():
+        for sensor_type, sensor_reading in sensor_data.items():
             if sensor_type in self.sensors:
+                data = sensor_reading['data']
                 detected = self._process_sensor_data(sensor_type, data)
                 obstacles.extend(detected)
                 
@@ -82,6 +84,10 @@ class ObstacleDetector:
         # Update obstacle buffer for tracking
         self.obstacle_buffer = obstacles
         
+        # Log detected obstacles
+        for obstacle in obstacles:
+            self._log_detected_obstacle(obstacle)
+
         return obstacles
     
     def _process_sensor_data(self, sensor_type: SensorType, 
@@ -275,3 +281,15 @@ class ObstacleDetector:
                     critical.append(obstacle)
                     
         return critical
+
+    def _log_detected_obstacle(self, obstacle: Obstacle):
+        """Log detected obstacle to a file"""
+        with open(self._obstacle_log_file, 'a') as f:
+            log_entry = (
+                f"timestamp: {time.time():.2f}, "
+                f"position: {obstacle.position.tolist()}, "
+                f"size: {obstacle.size.tolist()}, "
+                f"distance: {obstacle.distance:.2f}, "
+                f"confidence: {obstacle.confidence:.2f}\n"
+            )
+            f.write(log_entry)

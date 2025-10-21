@@ -183,11 +183,13 @@ class ILASCore:
         obstacles = self.detector.detect_obstacles(sensor_data)
         
         # Analyze landing area
+        image_data = self.controller.get_camera_image()
         landing_sites = self.landing.analyze_landing_area(
             landing_area_center,
             search_radius,
             terrain_data=self.terrain_mapper.get_terrain_map(),
-            obstacles=obstacles
+            obstacles=obstacles,
+            image_data=image_data
         )
         
         # Select best site
@@ -446,8 +448,14 @@ class ILASCore:
                         depth_camera_data[v, u] = p_cam[2]
 
         return {
-            'lidar': self.lidar_data,
-            'depth_camera': depth_camera_data
+            'lidar': {
+                'data': self.lidar_data,
+                'last_update': time.time()
+            },
+            'depth_camera': {
+                'data': depth_camera_data,
+                'last_update': time.time()
+            }
         }
     
     def get_system_status(self) -> Dict:
