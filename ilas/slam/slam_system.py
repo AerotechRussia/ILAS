@@ -7,11 +7,19 @@ class SLAMSystem:
     def __init__(self, config):
         self.config = config
 
-        # For now, let's assume a laser sensor. This should be made configurable.
-        self.laser = Laser(scan_size=360, scan_rate_hz=10, detection_angle_degrees=360, distance_no_detection_mm=12000)
+        # Laser sensor parameters from config
+        scan_size = config.get('scan_size', 360)
+        scan_rate_hz = config.get('scan_rate_hz', 10)
+        detection_angle_degrees = config.get('detection_angle_degrees', 360)
+        distance_no_detection_mm = config.get('distance_no_detection_mm', 12000)
 
-        # Create a SLAM object
-        self.slam = RMHC_SLAM(self.laser, map_size_pixels=500, map_size_meters=10)
+        self.laser = Laser(scan_size, scan_rate_hz, detection_angle_degrees, distance_no_detection_mm)
+
+        # SLAM algorithm parameters from config
+        map_size_pixels = config.get('map_size_pixels', 500)
+        map_size_meters = config.get('map_size_meters', 10)
+
+        self.slam = RMHC_SLAM(self.laser, map_size_pixels, map_size_meters)
 
     def update(self, sensor_data):
         """
