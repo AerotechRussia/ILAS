@@ -16,6 +16,18 @@ detection:
     - type: ultrasonic
       enabled: true
       max_range: 5.0
+    - type: ml_camera
+      enabled: true
+      model_path: "yolov5s" # Can be a path to a custom model
+      confidence_threshold: 0.4
+      device: "cpu" # or "cuda:0"
+      focal_length: 500.0 # Approximate focal length in pixels
+      classes_to_detect:
+        - person
+        - car
+        - bicycle
+        - bus
+        - truck
 
 avoidance:
   strategy: potential_field  # Options: potential_field, vector_field, dynamic_window, rrt
@@ -53,7 +65,10 @@ geofence:
     - [100, 100]
     - [0, 100]
 
-person_detection:
-  model_path: "models/yolo5_fullDS_native.pt"
-  confidence_threshold: 0.5
-  device: "cpu"  # "cpu" or "cuda:0"
+slam:
+  map_size_pixels: 500
+  map_size_meters: 10
+  scan_size: 360
+  scan_rate_hz: 10
+  detection_angle_degrees: 360
+  distance_no_detection_mm: 12000
