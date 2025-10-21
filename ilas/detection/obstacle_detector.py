@@ -6,6 +6,8 @@ Detects obstacles using various sensor inputs (LiDAR, cameras, ultrasonic, etc.)
 import numpy as np
 from typing import List, Dict, Tuple, Optional
 from enum import Enum
+import logging
+from ilas.detection.ml_obstacle_detector import MLObstacleDetector, MLObstacle
 
 
 class SensorType(Enum):
@@ -15,6 +17,7 @@ class SensorType(Enum):
     ULTRASONIC = "ultrasonic"
     RADAR = "radar"
     DEPTH_CAMERA = "depth_camera"
+    ML_CAMERA = "ml_camera"
 
 
 class Obstacle:
@@ -49,15 +52,18 @@ class ObstacleDetector:
         self.detection_range = config.get('detection_range', 20.0)  # meters
         self.min_confidence = config.get('min_confidence', 0.6)
         self.obstacle_buffer = []
+        self.ml_detector = None
         self._initialize_sensors()
-        
+
     def _initialize_sensors(self):
         """Initialize configured sensors"""
         sensor_configs = self.config.get('sensors', [])
         for sensor_config in sensor_configs:
             sensor_type = SensorType(sensor_config['type'])
             self.sensors[sensor_type] = sensor_config
-            
+            if sensor_type == SensorType.ML_CAMERA:
+                self.ml_detector = MLObstacleDetector(sensor_config)
+
     def detect_obstacles(self, sensor_data: Dict) -> List[Obstacle]:
         """
         Detect obstacles from sensor data
@@ -70,11 +76,15 @@ class ObstacleDetector:
         """
         obstacles = []
         
-        for sensor_type, data in sensor_data.items():
-            if sensor_type in self.sensors:
-                detected = self._process_sensor_data(sensor_type, data)
-                obstacles.extend(detected)
-                
+        for sensor_type_str, data in sensor_data.items():
+            try:
+                sensor_type = SensorType(sensor_type_str)
+                if sensor_type in self.sensors:
+                    detected = self._process_sensor_data(sensor_type, data)
+                    obstacles.extend(detected)
+            except ValueError:
+                print(f"Warning: Unknown sensor type '{sensor_type_str}'")
+
         # Filter by confidence and merge close obstacles
         obstacles = self._filter_obstacles(obstacles)
         obstacles = self._merge_close_obstacles(obstacles)
@@ -83,9 +93,9 @@ class ObstacleDetector:
         self.obstacle_buffer = obstacles
         
         return obstacles
-    
-    def _process_sensor_data(self, sensor_type: SensorType, 
-                            data: np.ndarray) -> List[Obstacle]:
+
+    def _process_sensor_data(self, sensor_type: SensorType,
+                             data: np.ndarray) -> List[Obstacle]:
         """Process data from specific sensor type"""
         obstacles = []
         
@@ -99,7 +109,9 @@ class ObstacleDetector:
             obstacles = self._process_radar(data)
         elif sensor_type == SensorType.DEPTH_CAMERA:
             obstacles = self._process_depth_camera(data)
-            
+        elif sensor_type == SensorType.ML_CAMERA:
+            obstacles = self._process_ml_camera(data)
+
         return obstacles
     
     def _process_lidar(self, data: np.ndarray) -> List[Obstacle]:
@@ -200,6 +212,57 @@ class ObstacleDetector:
             # Simple region growing (simplified)
             # In production, use proper segmentation
             
+        return obstacles
+
+    def _process_ml_camera(self, image: np.ndarray) -> List[Obstacle]:
+        """Process image data with the ML obstacle detector"""
+        if self.ml_detector is None:
+            return []
+
+        logging.warning("Using simplified 2D to 3D projection for ML obstacles. "
+                        "This is not suitable for real-world navigation. "
+                        "A depth camera or stereo vision is recommended.")
+
+        ml_obstacles = self.ml_detector.detect(image)
+        obstacles = []
+
+        focal_length = self.sensors.get(SensorType.ML_CAMERA, {}).get('focal_length', 500.0)
+
+        for ml_obs in ml_obstacles:
+            x1, y1, x2, y2 = ml_obs.bbox
+            bbox_width_pixels = x2 - x1
+
+            # Approximate distance using the focal length formula (simplified)
+            # Assumes a known object width of 1.0 meter for simplicity
+            if bbox_width_pixels > 0:
+                distance = (1.0 * focal_length) / bbox_width_pixels
+            else:
+                distance = self.detection_range
+
+            distance = np.clip(distance, 1.0, self.detection_range)
+
+            # Estimate position based on bbox center
+            center_x = (x1 + x2) / 2
+            image_center_x = image.shape[1] / 2
+            angle = np.arctan((center_x - image_center_x) / focal_length)
+
+            position = np.array([
+                distance * np.cos(angle),
+                distance * np.sin(angle),
+                0  # Assume ground plane
+            ])
+
+            # Simplified size estimation
+            size = np.array([bbox_width_pixels / 100, (y2 - y1) / 100, 1.0])
+
+            obstacle = Obstacle(
+                position=position,
+                size=size,
+                distance=distance,
+                confidence=ml_obs.confidence
+            )
+            obstacles.append(obstacle)
+
         return obstacles
     
     def _filter_obstacles(self, obstacles: List[Obstacle]) -> List[Obstacle]:
