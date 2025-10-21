@@ -11,7 +11,6 @@ import cv2
 from dronekit import connect, VehicleMode
 
 from .detection.obstacle_detector import ObstacleDetector, Obstacle
-from .detection.person_detector import PersonDetector
 from .avoidance.avoidance_system import AvoidanceSystem
 from .landing.intelligent_landing import IntelligentLanding, LandingSite
 from .controllers.controller_manager import ControllerManager
@@ -44,7 +43,6 @@ class ILASCore:
         
         # Initialize components
         self.detector = ObstacleDetector(config.get('detection', {}))
-        self.person_detector = PersonDetector(config.get('person_detection', {}))
         self.avoidance = AvoidanceSystem(config.get('avoidance', {}))
         self.landing = IntelligentLanding(config.get('landing', {}))
         self.controller = ControllerManager(config.get('controller', {}))
@@ -70,8 +68,7 @@ class ILASCore:
         self.is_running = False
         self.current_mission = None
         self.update_rate = config.get('update_rate', 10.0)
-        self.detected_persons = []
-        self._person_detection_thread = None
+        self._main_loop_thread = None
         
     def start(self) -> bool:
         """
@@ -87,11 +84,11 @@ class ILASCore:
         
         self.is_running = True
 
-        # Start person detection thread
-        self._person_detection_thread = threading.Thread(
-            target=self._person_detection_loop, daemon=True
+        # Start main processing loop
+        self._main_loop_thread = threading.Thread(
+            target=self._main_loop, daemon=True
         )
-        self._person_detection_thread.start()
+        self._main_loop_thread.start()
 
         print("ILAS system started successfully")
         return True
@@ -278,79 +275,42 @@ class ILASCore:
         mission_plan = self.mission_planner.generate_plan(current_position, goal_position, map_data)
 
         # Navigate through the planned waypoints
-        last_update_time = time.time()
-        while mission_plan:
+        while mission_plan and self.is_running:
             target = mission_plan[0]
             
-            # Navigate with obstacle avoidance
-            while True:
-                # Calculate dt
-                current_time = time.time()
-                dt = current_time - last_update_time
-                last_update_time = current_time
+            fused_state = self.sensor_fusion.get_state()
+            current_position = fused_state[0:3]
 
-                # Predict the next state
-                self.sensor_fusion.predict(dt)
+            # Check if reached waypoint
+            if np.linalg.norm(current_position - target) < 1.0:
+                mission_plan.pop(0) # Move to the next waypoint
+                continue
 
-                # Get sensor data
-                sensor_data = self._get_sensor_data()
-                telemetry = self.controller.get_telemetry()
+            # Get latest sensor data for navigation command
+            sensor_data = self._get_sensor_data()
 
-                # Update with IMU data
-                imu_data = np.concatenate([telemetry['acceleration'], telemetry['attitude']])
-                self.sensor_fusion.update(imu_data, 'imu')
+            # Adapt the plan if necessary
+            map_data = {'map': self.slam.get_map()}
+            new_plan = self.mission_planner.adapt_plan(mission_plan, current_position, map_data)
+            if new_plan:
+                mission_plan = new_plan
+                # Loop will restart with the new plan's first waypoint
+                continue
 
-                # Update with GPS data
-                if 'position' in telemetry:
-                    self.sensor_fusion.update(telemetry['position'], 'gps')
+            # Navigate to target
+            nav_command, is_safe = self.navigate_to_target(target, sensor_data)
+            if not is_safe:
+                print("Warning: Unsafe conditions detected during mission")
 
-                # Update with SLAM data
-                self.slam.update(sensor_data)
-                slam_pose = self.slam.get_pose()
-                self.sensor_fusion.update(np.array([slam_pose[0], slam_pose[1], slam_pose[2]]), 'slam')
-                
-                # Update wind estimate
-                self.wind_estimator.update(telemetry)
+            self.controller.send_command('velocity', nav_command)
 
-                # Check for failsafe conditions
-                failsafe_events = self.failsafe_manager.check_failsafes(telemetry)
-                if failsafe_events:
-                    print(f"Failsafe triggered: {failsafe_events}")
-                    self.emergency_land(sensor_data)
-                    return
+            # Check for geofence breach
+            if not self.geofence_manager.is_within_geofence(current_position):
+                print("Geofence breached! Initiating emergency landing.")
+                self.emergency_land(sensor_data)
+                return
 
-                nav_command, is_safe = self.navigate_to_target(target, sensor_data)
-                
-                if not is_safe:
-                    print("Warning: Unsafe conditions detected")
-                
-                fused_state = self.sensor_fusion.get_state()
-                current_position = fused_state[0:3]
-
-                # Adapt the plan if necessary
-                map_data = {'map': self.slam.get_map()}
-                new_plan = self.mission_planner.adapt_plan(mission_plan, current_position, map_data)
-                if new_plan:
-                    mission_plan = new_plan
-                    break # Restart the inner loop with the new plan
-
-                # Check if reached waypoint
-                distance = np.linalg.norm(current_position - target)
-                
-                if distance < 1.0:
-                    mission_plan.pop(0) # Move to the next waypoint
-                    if not mission_plan:
-                        break # Mission complete
-                
-                # Check for geofence breach
-                if not self.geofence_manager.is_within_geofence(current_position):
-                    print("Geofence breached! Initiating emergency landing.")
-                    self.emergency_land(sensor_data)
-                    return
-
-                # Send navigation command
-                self.controller.send_command('velocity', nav_command)
-                time.sleep(1.0 / self.update_rate)
+            time.sleep(1.0 / self.update_rate)
         
         # Land at final waypoint
         landing_center = waypoints[-1] if waypoints else [0, 0, 0]
@@ -358,6 +318,51 @@ class ILASCore:
         
         # Disarm
         self.controller.send_command('disarm', None)
+
+    def _main_loop(self):
+        """
+        Main processing loop for continuous updates
+        """
+        last_update_time = time.time()
+        while self.is_running:
+            # Calculate dt
+            current_time = time.time()
+            dt = current_time - last_update_time
+            last_update_time = current_time
+
+            # Predict the next state
+            self.sensor_fusion.predict(dt)
+
+            # Get sensor data
+            sensor_data = self._get_sensor_data()
+            telemetry = self.controller.get_telemetry()
+
+            # Update with IMU data
+            imu_data = np.concatenate([telemetry['acceleration'], telemetry['attitude']])
+            self.sensor_fusion.update(imu_data, 'imu')
+
+            # Update with GPS data
+            if 'position' in telemetry:
+                self.sensor_fusion.update(telemetry['position'], 'gps')
+
+            # Update with SLAM data
+            self.slam.update(sensor_data)
+            slam_pose = self.slam.get_pose()
+            self.sensor_fusion.update(np.array([slam_pose[0], slam_pose[1], slam_pose[2]]), 'slam')
+
+            # Update wind estimate
+            self.wind_estimator.update(telemetry)
+
+            # Check for failsafe conditions
+            failsafe_events = self.failsafe_manager.check_failsafes(telemetry)
+            if failsafe_events:
+                print(f"Failsafe triggered: {failsafe_events}")
+                self.emergency_land(sensor_data)
+                # In a real scenario, you might want to handle this more gracefully
+                self.stop()
+                return
+
+            time.sleep(1.0 / self.update_rate)
 
     def run_search_mission(self, search_area: List[float], altitude: float, overlap: float):
         """
@@ -386,13 +391,18 @@ class ILASCore:
 
             # Navigate to waypoint
             while np.linalg.norm(self.controller.get_telemetry()['position'] - waypoint) > 1.0:
-                nav_command, is_safe = self.navigate_to_target(waypoint, self._get_sensor_data())
+                sensor_data = self._get_sensor_data()
+                nav_command, is_safe = self.navigate_to_target(waypoint, sensor_data)
                 self.controller.send_command('velocity', nav_command)
+
+                # Detect obstacles and check for persons
+                obstacles = self.detector.detect_obstacles(sensor_data)
+                for obs in obstacles:
+                    if obs.class_name == 'person':
+                        search_map.add_detection(obs.position)
 
                 # Update map
                 search_map.update_path(self.controller.get_telemetry()['position'])
-                for person in self.detected_persons:
-                    search_map.add_detection(person)
 
                 # Generate map periodically
                 if i % 10 == 0:
@@ -445,9 +455,16 @@ class ILASCore:
                     if 0 <= u < 100 and 0 <= v < 100:
                         depth_camera_data[v, u] = p_cam[2]
 
+        # Get real image for ML detector
+        image = self.controller.get_camera_image()
+
         return {
             'lidar': self.lidar_data,
-            'depth_camera': depth_camera_data
+            'depth_camera': depth_camera_data,
+            'ml_camera': {
+                'image': image,
+                'depth_map': depth_camera_data
+            }
         }
     
     def get_system_status(self) -> Dict:
@@ -462,28 +479,4 @@ class ILASCore:
             'controller_connected': self.controller.is_connected(),
             'current_mission': self.current_mission,
             'telemetry': self.controller.get_telemetry(),
-            'detected_persons': self.detected_persons,
         }
-
-    def _person_detection_loop(self):
-        """
-        Main loop for person detection
-        """
-        while self.is_running:
-            image = self.controller.get_camera_image()
-            if image is not None:
-                # Detect persons
-                persons = self.person_detector.detect(image)
-                if persons:
-                    timestamp = time.time()
-                    telemetry = self.controller.get_telemetry()
-                    for p in persons:
-                        self.detected_persons.append(
-                            {
-                                'timestamp': timestamp,
-                                'position': telemetry['position'],
-                                'bounding_box': p,
-                            }
-                        )
-            # Control loop rate
-            time.sleep(0.1)
