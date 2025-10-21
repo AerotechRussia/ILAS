@@ -55,7 +55,7 @@ class ObstacleDetector:
         self.detection_range = config.get('detection_range', 20.0)  # meters
         self.min_confidence = config.get('min_confidence', 0.6)
         self.obstacle_buffer = []
-        self.ml_detector = None
+        self._obstacle_log_file = config.get('obstacle_log_file', 'obstacle_log.txt')
         self._initialize_sensors()
 
     def _initialize_sensors(self):
@@ -78,27 +78,26 @@ class ObstacleDetector:
         """
         sensor_obstacles = {}
         
-        for sensor_type_str, data in sensor_data.items():
-            try:
-                sensor_type_enum = SensorType(sensor_type_str)
-                if sensor_type_enum in self.sensors:
-                    detected = self._process_sensor_data(sensor_type_enum, data)
-                    if detected:
-                        sensor_obstacles[sensor_type_str] = detected
-            except ValueError:
-                # Ignore sensor types not defined in the enum
-                continue
-
-        return sensor_obstacles
-
-    def set_obstacle_buffer(self, obstacles: List[Obstacle]):
-        """
-        Update the internal obstacle buffer with a list of (fused) obstacles.
+        for sensor_type, sensor_reading in sensor_data.items():
+            if sensor_type in self.sensors:
+                data = sensor_reading['data']
+                detected = self._process_sensor_data(sensor_type, data)
+                obstacles.extend(detected)
+                
+        # Filter by confidence and merge close obstacles
+        obstacles = self._filter_obstacles(obstacles)
+        obstacles = self._merge_close_obstacles(obstacles)
         
         Args:
             obstacles: The list of obstacles to store.
         """
         self.obstacle_buffer = obstacles
+        
+        # Log detected obstacles
+        for obstacle in obstacles:
+            self._log_detected_obstacle(obstacle)
+
+        return obstacles
     
     def _process_sensor_data(self, sensor_type: SensorType, 
                             data: np.ndarray) -> List[Obstacle]:
@@ -359,3 +358,15 @@ class ObstacleDetector:
                     critical.append(obstacle)
                     
         return critical
+
+    def _log_detected_obstacle(self, obstacle: Obstacle):
+        """Log detected obstacle to a file"""
+        with open(self._obstacle_log_file, 'a') as f:
+            log_entry = (
+                f"timestamp: {time.time():.2f}, "
+                f"position: {obstacle.position.tolist()}, "
+                f"size: {obstacle.size.tolist()}, "
+                f"distance: {obstacle.distance:.2f}, "
+                f"confidence: {obstacle.confidence:.2f}\n"
+            )
+            f.write(log_entry)

@@ -24,6 +24,7 @@ class FailsafeManager:
             self._check_gps,
             self._check_controller_link,
             self._check_geofence,
+            self._check_sensor_health,
         ]
         geofence_config = {
             'enabled': config.get('check_geofence', False),
@@ -110,3 +111,19 @@ class FailsafeManager:
                 return 'geofence_breached'
         return None
 
+    def _check_sensor_health(self, telemetry: Dict) -> str:
+        """
+        Check for sensor data loss
+
+        Args:
+            telemetry: Current drone telemetry
+
+        Returns:
+            'sensor_failure' if failsafe triggered, else None
+        """
+        max_sensor_delay = self.config.get('max_sensor_delay', 2.0)
+        if 'sensor_status' in telemetry:
+            for sensor, status in telemetry['sensor_status'].items():
+                if 'last_update' in status and time.time() - status['last_update'] > max_sensor_delay:
+                    return f'sensor_failure_{sensor}'
+        return None

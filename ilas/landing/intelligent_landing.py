@@ -23,12 +23,13 @@ class LandingSite:
     """Represents a potential landing site"""
     
     def __init__(self, position: np.ndarray, size: np.ndarray,
-                 slope: float, roughness: float, score: float):
+                 slope: float, roughness: float, score: float, texture_score: float = 0.0):
         self.position = position  # Center position [x, y, z]
         self.size = size  # [width, depth] in meters
         self.slope = slope  # Slope angle in degrees
         self.roughness = roughness  # 0.0 (smooth) to 1.0 (very rough)
         self.score = score  # Overall suitability score 0.0 to 1.0
+        self.texture_score = texture_score # 0.0 (bad) to 1.0 (good)
         
     def __repr__(self):
         return f"LandingSite(pos={self.position}, score={self.score:.2f})"
@@ -60,7 +61,7 @@ class IntelligentLanding:
                             search_radius: float,
                             terrain_data: Optional[np.ndarray] = None,
                             obstacles: Optional[List[Obstacle]] = None,
-                            semantic_map: Optional[np.ndarray] = None) -> List[LandingSite]:
+                            image_data: Optional[np.ndarray] = None) -> List[LandingSite]:
         """
         Analyze area and find suitable landing sites
         
@@ -129,12 +130,13 @@ class IntelligentLanding:
                         semantic_safety_score = safe_pixels / total_pixels if total_pixels > 0 else 0
 
                     # Calculate score
+                    texture_score = self._assess_landing_surface_texture(image_data, (i, j, patch_size))
                     score = self._calculate_landing_score(
                         site_pos,
                         center_position,
                         slope,
                         roughness,
-                        semantic_safety_score
+                        texture_score
                     )
 
                     site = LandingSite(
@@ -142,7 +144,8 @@ class IntelligentLanding:
                         size=np.array(self.min_landing_size),
                         slope=slope,
                         roughness=roughness,
-                        score=score
+                        score=score,
+                        texture_score=texture_score
                     )
                     sites.append(site)
 
@@ -239,7 +242,7 @@ class IntelligentLanding:
                                  target_position: np.ndarray,
                                  slope: float,
                                  roughness: float,
-                                 semantic_safety_score: float = 1.0) -> float:
+                                 texture_score: float) -> float:
         """Calculate overall landing site score"""
         # Distance penalty
         distance = np.linalg.norm(site_position - target_position)
@@ -267,10 +270,11 @@ class IntelligentLanding:
 
         # --- Weighted Combination ---
         total_score = (
-            0.4 * distance_score +
-            0.4 * slope_score +
-            0.2 * roughness_score
-        ) * semantic_safety_score
+            0.3 * distance_score +
+            0.3 * slope_score +
+            0.2 * roughness_score +
+            0.2 * texture_score
+        )
         
         return max(0.0, min(1.0, total_score))
     
@@ -440,3 +444,35 @@ class IntelligentLanding:
                 break
         
         return target
+
+    def _assess_landing_surface_texture(self, image_data: Optional[np.ndarray], roi: Tuple[int, int, int]) -> float:
+        """
+        Assess landing surface texture from image data
+
+        Args:
+            image_data: Image of the landing area
+            roi: Region of interest (x, y, size) in image coordinates
+
+        Returns:
+            Texture score (0.0 = bad, 1.0 = good)
+        """
+        if image_data is None:
+            return 0.5  # Neutral score if no image data
+
+        x, y, size = roi
+        patch = image_data[y:y+size, x:x+size]
+
+        if patch.size == 0:
+            return 0.0
+
+        # Use simple metric based on image variance
+        # High variance could mean rough, uneven terrain
+        # Low variance could mean smooth, uniform terrain (e.g., asphalt, grass)
+        gray_patch = np.mean(patch, axis=2) if len(patch.shape) == 3 else patch
+        variance = np.var(gray_patch)
+
+        # Normalize variance to score (heuristic)
+        # Lower variance is better
+        texture_score = np.exp(-variance / 1000.0)
+
+        return max(0.0, min(1.0, texture_score))

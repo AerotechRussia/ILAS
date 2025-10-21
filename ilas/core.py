@@ -199,12 +199,13 @@ class ILASCore:
         self.detector.set_obstacle_buffer(obstacles)
         
         # Analyze landing area
+        image_data = self.controller.get_camera_image()
         landing_sites = self.landing.analyze_landing_area(
             landing_area_center,
             search_radius,
             terrain_data=self.terrain_mapper.get_terrain_map(),
             obstacles=obstacles,
-            semantic_map=self.semantic_segmentation_map
+            image_data=image_data
         )
         
         # Select best site
@@ -484,11 +485,13 @@ class ILASCore:
             image = np.zeros((100, 100, 3), dtype=np.uint8)
 
         return {
-            'lidar': self.lidar_data,
-            'depth_camera': depth_camera_data,
-            'ml_camera': {
-                'image': image,
-                'depth_map': depth_camera_data
+            'lidar': {
+                'data': self.lidar_data,
+                'last_update': time.time()
+            },
+            'depth_camera': {
+                'data': depth_camera_data,
+                'last_update': time.time()
             }
         }
     
