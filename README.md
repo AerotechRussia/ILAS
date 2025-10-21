@@ -4,7 +4,7 @@
 - [English](README_EN.md)
 - [Русский](README_RU.md)
 
-# ILAS - Intelligent Landing and Avoidance System
+
 
 **ILAS** (Intelligent Landing and Avoidance System) is a comprehensive obstacle detection and avoidance system for VTOL (Vertical Take-Off and Landing) drones. The system provides intelligent landing capabilities on designated surfaces and supports multiple flight controller platforms.
 
