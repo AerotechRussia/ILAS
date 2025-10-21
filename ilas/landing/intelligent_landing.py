@@ -70,6 +70,7 @@ class IntelligentLanding:
             search_radius: Radius to search in meters
             terrain_data: Optional height map of terrain
             obstacles: Optional list of detected obstacles
+            semantic_map: Optional semantic segmentation map
             
         Returns:
             List of potential landing sites sorted by score
@@ -78,7 +79,7 @@ class IntelligentLanding:
         
         if terrain_data is not None:
             landing_sites = self._analyze_terrain(
-                center_position, search_radius, terrain_data
+                center_position, search_radius, terrain_data, semantic_map
             )
         else:
             # Use obstacle-free regions
@@ -94,12 +95,12 @@ class IntelligentLanding:
     def _analyze_terrain(self,
                         center_position: np.ndarray,
                         search_radius: float,
-                        terrain_data: np.ndarray) -> List[LandingSite]:
+                        terrain_data: np.ndarray,
+                        semantic_map: Optional[np.ndarray] = None) -> List[LandingSite]:
         """Analyze terrain height map for landing sites"""
         sites = []
 
-        # Grid search for flat areas
-        grid_resolution = 0.5  # meters
+        grid_resolution = 0.5
         num_points = int(2 * search_radius / grid_resolution)
 
         for i in range(num_points):
@@ -107,27 +108,31 @@ class IntelligentLanding:
                 x = center_position[0] - search_radius + i * grid_resolution
                 y = center_position[1] - search_radius + j * grid_resolution
 
-                # Extract local patch
-                patch_size = max(int(self.min_landing_size[0] / grid_resolution), 3)
+                patch_size_px = int(self.min_landing_size[0] / grid_resolution)
 
-                if i + patch_size >= num_points or j + patch_size >= num_points:
+                if i + patch_size_px >= terrain_data.shape[0] or j + patch_size_px >= terrain_data.shape[1]:
                     continue
 
-                # Calculate terrain properties
-                patch = terrain_data[i:i+patch_size, j:j+patch_size]
+                patch = terrain_data[i:i+patch_size_px, j:j+patch_size_px]
 
-                # Calculate slope
                 slope = self._calculate_slope(patch, grid_resolution)
-
-                # Calculate roughness
                 roughness = self._calculate_roughness(patch)
 
-                # Check if suitable
                 if slope <= self.max_slope and roughness <= self.max_roughness:
+                    # Calculate semantic safety score
+                    semantic_safety_score = 1.0
+                    if semantic_map is not None:
+                        # Assuming semantic_map has the same resolution as terrain_data
+                        semantic_patch = semantic_map[i:i+patch_size, j:j+patch_size]
+                        # 0 is the background class, which we consider safe
+                        safe_pixels = np.sum(semantic_patch == 0)
+                        total_pixels = semantic_patch.size
+                        semantic_safety_score = safe_pixels / total_pixels if total_pixels > 0 else 0
+
                     # Calculate score
                     texture_score = self._assess_landing_surface_texture(image_data, (i, j, patch_size))
                     score = self._calculate_landing_score(
-                        np.array([x, y, np.mean(patch)]),
+                        site_pos,
                         center_position,
                         slope,
                         roughness,
@@ -135,7 +140,7 @@ class IntelligentLanding:
                     )
 
                     site = LandingSite(
-                        position=np.array([x, y, np.mean(patch)]),
+                        position=site_pos,
                         size=np.array(self.min_landing_size),
                         slope=slope,
                         roughness=roughness,
@@ -248,8 +253,22 @@ class IntelligentLanding:
         
         # Roughness penalty
         roughness_score = 1.0 - (roughness / self.max_roughness)
+
+        # 2. Obstacle Clearance Score (30%)
+        # Higher clearance is better.
+        clearance_score = obstacle_clearance
+
+        # 3. Slope Score (20%)
+        # Lower slope is better.
+        slope_score = 1.0 - (slope / self.max_slope)
         
-        # Weighted combination
+        # 4. Distance Score (10%)
+        # Closer to the target is better.
+        distance = np.linalg.norm(site_position[:2] - target_position[:2])
+        # Using exponential decay for distance scoring
+        distance_score = np.exp(-distance / (self.config.get('landing_search_radius', 20.0) * 0.5))
+
+        # --- Weighted Combination ---
         total_score = (
             0.3 * distance_score +
             0.3 * slope_score +
