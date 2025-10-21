@@ -1,10 +1,13 @@
 # ilas/fusion/sensor_fusion.py
 
 import numpy as np
+from typing import Optional
+from ilas.safety.watchdog import WatchdogTimer
 
 class SensorFusionEKF:
-    def __init__(self, config):
+    def __init__(self, config, watchdog: Optional[WatchdogTimer] = None):
         self.config = config
+        self.watchdog = watchdog
 
         # State vector [x, y, z, vx, vy, vz, ax, ay, az, roll, pitch, yaw]
         self.state = np.zeros(12)
@@ -27,6 +30,11 @@ class SensorFusionEKF:
         """
         # State transition matrix for a constant acceleration model
         F = np.eye(12)
+
+        # Pet the watchdog before the prediction step
+        if self.watchdog:
+            self.watchdog.reset()
+
         F[0, 3] = dt
         F[1, 4] = dt
         F[2, 5] = dt

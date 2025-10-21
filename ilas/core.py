@@ -11,7 +11,6 @@ import cv2
 from dronekit import connect, VehicleMode
 
 from .detection.obstacle_detector import ObstacleDetector, Obstacle
-from .detection.person_detector import PersonDetector
 from .detection.semantic_detector import SemanticDetector
 from .avoidance.avoidance_system import AvoidanceSystem
 from .landing.intelligent_landing import IntelligentLanding, LandingSite
@@ -25,6 +24,7 @@ from .geofence.geofence_manager import GeofenceManager
 from .search.grid import generate_search_grid
 from .search.mapping import SearchMapping
 from .safety.failsafe_manager import FailsafeManager
+from .safety.watchdog import WatchdogTimer
 from .stabilization.wind_estimator import WindEstimator
 from .landing.versatile_landing import VersatileLanding
 from .avoidance.improved_avoidance import ImprovedAvoidance
@@ -43,18 +43,28 @@ class ILASCore:
             config: Master configuration dictionary
         """
         self.config = config
+
+        # Initialize watchdog timers
+        watchdog_timeout = self.config.get('watchdog_timeout_s', 2.0)
+        self.detection_watchdog = WatchdogTimer(watchdog_timeout)
+        self.fusion_watchdog = WatchdogTimer(watchdog_timeout)
         
         # Initialize components
-        self.detector = ObstacleDetector(config.get('detection', {}))
+        self.detector = ObstacleDetector(
+            config.get('detection', {}),
+            watchdog=self.detection_watchdog
+        )
         self.fusion_manager = FusionManager(config.get('fusion', {}))
-        self.person_detector = PersonDetector(config.get('person_detection', {}))
         self.semantic_detector = SemanticDetector(config.get('semantic_detection', {}))
         self.avoidance = AvoidanceSystem(config.get('avoidance', {}))
         self.landing = IntelligentLanding(config.get('landing', {}))
         self.controller = ControllerManager(config.get('controller', {}))
         self.slam = SLAMSystem(config.get('slam', {}))
         self.terrain_mapper = TerrainMapper(config.get('terrain_mapping', {}))
-        self.sensor_fusion = SensorFusionEKF(config.get('sensor_fusion', {}))
+        self.sensor_fusion = SensorFusionEKF(
+            config.get('sensor_fusion', {}),
+            watchdog=self.fusion_watchdog
+        )
         self.mission_planner = MissionPlanner(config.get('mission_planning', {}))
         self.geofence_manager = GeofenceManager(config.get('geofence', {}))
         self.failsafe_manager = FailsafeManager(config.get('failsafe', {}))
@@ -74,8 +84,6 @@ class ILASCore:
         self.is_running = False
         self.current_mission = None
         self.update_rate = config.get('update_rate', 10.0)
-        self.detected_persons = []
-        self._person_detection_thread = None
         self.semantic_segmentation_map = None
         self._semantic_detection_thread = None
         
@@ -384,6 +392,19 @@ class ILASCore:
                 self.stop()
                 return
 
+            # Check watchdogs
+            if self.detection_watchdog.is_expired():
+                print("CRITICAL: Detection module watchdog expired! Triggering emergency landing.")
+                self.emergency_land(sensor_data)
+                self.stop()
+                return
+
+            if self.fusion_watchdog.is_expired():
+                print("CRITICAL: Sensor fusion module watchdog expired! Triggering emergency landing.")
+                self.emergency_land(sensor_data)
+                self.stop()
+                return
+
             time.sleep(1.0 / self.update_rate)
 
     def run_search_mission(self, search_area: List[float], altitude: float, overlap: float):
@@ -517,26 +538,3 @@ class ILASCore:
                 self.semantic_segmentation_map = self.semantic_detector.detect(image)
             # Control loop rate
             time.sleep(0.5)
-
-    def _person_detection_loop(self):
-        """
-        Main loop for person detection
-        """
-        while self.is_running:
-            image = self.controller.get_camera_image()
-            if image is not None:
-                # Detect persons
-                persons = self.person_detector.detect(image)
-                if persons:
-                    timestamp = time.time()
-                    telemetry = self.controller.get_telemetry()
-                    for p in persons:
-                        self.detected_persons.append(
-                            {
-                                'timestamp': timestamp,
-                                'position': telemetry['position'],
-                                'bounding_box': p,
-                            }
-                        )
-            # Control loop rate
-            time.sleep(0.1)

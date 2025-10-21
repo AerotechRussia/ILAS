@@ -251,20 +251,6 @@ class IntelligentLanding:
         # Roughness penalty
         roughness_score = 1.0 - (roughness / self.max_roughness)
 
-        # 2. Obstacle Clearance Score (30%)
-        # Higher clearance is better.
-        clearance_score = obstacle_clearance
-
-        # 3. Slope Score (20%)
-        # Lower slope is better.
-        slope_score = 1.0 - (slope / self.max_slope)
-        
-        # 4. Distance Score (10%)
-        # Closer to the target is better.
-        distance = np.linalg.norm(site_position[:2] - target_position[:2])
-        # Using exponential decay for distance scoring
-        distance_score = np.exp(-distance / (self.config.get('landing_search_radius', 20.0) * 0.5))
-
         # --- Weighted Combination ---
         total_score = (
             0.4 * distance_score +

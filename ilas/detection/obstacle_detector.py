@@ -8,6 +8,7 @@ from typing import List, Dict, Tuple, Optional
 from enum import Enum
 import logging
 from ilas.detection.ml_obstacle_detector import MLObstacleDetector, MLObstacle
+from ilas.safety.watchdog import WatchdogTimer
 
 
 class SensorType(Enum):
@@ -43,12 +44,13 @@ class ObstacleDetector:
     Processes sensor data and identifies obstacles in the environment
     """
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, watchdog: Optional[WatchdogTimer] = None):
         """
         Initialize obstacle detector
         
         Args:
             config: Configuration dictionary with sensor settings
+            watchdog: An optional watchdog timer to monitor this process.
         """
         self.config = config
         self.sensors = {}
@@ -56,6 +58,7 @@ class ObstacleDetector:
         self.min_confidence = config.get('min_confidence', 0.6)
         self.obstacle_buffer = []
         self.ml_detector = None
+        self.watchdog = watchdog
         self._initialize_sensors()
 
     def _initialize_sensors(self):
@@ -88,6 +91,10 @@ class ObstacleDetector:
             except ValueError:
                 # Ignore sensor types not defined in the enum
                 continue
+
+        # Pet the watchdog after a successful processing cycle
+        if self.watchdog:
+            self.watchdog.reset()
 
         return sensor_obstacles
 
