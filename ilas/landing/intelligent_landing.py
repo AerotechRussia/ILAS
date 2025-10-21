@@ -59,7 +59,8 @@ class IntelligentLanding:
                             center_position: np.ndarray,
                             search_radius: float,
                             terrain_data: Optional[np.ndarray] = None,
-                            obstacles: Optional[List[Obstacle]] = None) -> List[LandingSite]:
+                            obstacles: Optional[List[Obstacle]] = None,
+                            semantic_map: Optional[np.ndarray] = None) -> List[LandingSite]:
         """
         Analyze area and find suitable landing sites
         
@@ -68,6 +69,7 @@ class IntelligentLanding:
             search_radius: Radius to search in meters
             terrain_data: Optional height map of terrain
             obstacles: Optional list of detected obstacles
+            semantic_map: Optional semantic segmentation map
             
         Returns:
             List of potential landing sites sorted by score
@@ -76,7 +78,7 @@ class IntelligentLanding:
         
         if terrain_data is not None:
             landing_sites = self._analyze_terrain(
-                center_position, search_radius, terrain_data, obstacles or []
+                center_position, search_radius, terrain_data, semantic_map
             )
         else:
             # Use obstacle-free regions
@@ -93,7 +95,7 @@ class IntelligentLanding:
                         center_position: np.ndarray,
                         search_radius: float,
                         terrain_data: np.ndarray,
-                        obstacles: List[Obstacle]) -> List[LandingSite]:
+                        semantic_map: Optional[np.ndarray] = None) -> List[LandingSite]:
         """Analyze terrain height map for landing sites"""
         sites = []
 
@@ -116,25 +118,23 @@ class IntelligentLanding:
                 roughness = self._calculate_roughness(patch)
 
                 if slope <= self.max_slope and roughness <= self.max_roughness:
-                    site_pos = np.array([x + self.min_landing_size[0]/2, y + self.min_landing_size[1]/2, np.mean(patch)])
+                    # Calculate semantic safety score
+                    semantic_safety_score = 1.0
+                    if semantic_map is not None:
+                        # Assuming semantic_map has the same resolution as terrain_data
+                        semantic_patch = semantic_map[i:i+patch_size, j:j+patch_size]
+                        # 0 is the background class, which we consider safe
+                        safe_pixels = np.sum(semantic_patch == 0)
+                        total_pixels = semantic_patch.size
+                        semantic_safety_score = safe_pixels / total_pixels if total_pixels > 0 else 0
 
-                    # Calculate obstacle clearance
-                    clearance = 1.0
-                    if obstacles:
-                        min_dist = float('inf')
-                        for obs in obstacles:
-                            dist = np.linalg.norm(site_pos[:2] - obs.position[:2])
-                            if dist < min_dist:
-                                min_dist = dist
-                        # Score clearance from 0 to 1 based on distance
-                        clearance = min(min_dist / (self.min_landing_size[0]), 1.0)
-
+                    # Calculate score
                     score = self._calculate_landing_score(
                         site_pos,
                         center_position,
                         slope,
                         roughness,
-                        clearance
+                        semantic_safety_score
                     )
 
                     site = LandingSite(
@@ -239,12 +239,16 @@ class IntelligentLanding:
                                  target_position: np.ndarray,
                                  slope: float,
                                  roughness: float,
-                                 obstacle_clearance: float) -> float:
-        """Calculate overall landing site score based on multiple criteria."""
-        # --- Scoring Components (0.0 to 1.0) ---
-
-        # 1. Roughness/Flatness Score (40%)
-        # Lower roughness is better.
+                                 semantic_safety_score: float = 1.0) -> float:
+        """Calculate overall landing site score"""
+        # Distance penalty
+        distance = np.linalg.norm(site_position - target_position)
+        distance_score = np.exp(-distance / 10.0)  # Prefer closer sites
+        
+        # Slope penalty
+        slope_score = 1.0 - (slope / self.max_slope)
+        
+        # Roughness penalty
         roughness_score = 1.0 - (roughness / self.max_roughness)
 
         # 2. Obstacle Clearance Score (30%)
@@ -263,11 +267,10 @@ class IntelligentLanding:
 
         # --- Weighted Combination ---
         total_score = (
-            0.4 * roughness_score +
-            0.3 * clearance_score +
-            0.2 * slope_score +
-            0.1 * distance_score
-        )
+            0.4 * distance_score +
+            0.4 * slope_score +
+            0.2 * roughness_score
+        ) * semantic_safety_score
         
         return max(0.0, min(1.0, total_score))
     
