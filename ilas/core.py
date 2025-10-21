@@ -17,6 +17,7 @@ from .controllers.controller_manager import ControllerManager
 from .slam.slam_system import SLAMSystem
 from .terrain.terrain_mapper import TerrainMapper
 from .fusion.sensor_fusion import SensorFusionEKF
+from .fusion.fusion_manager import FusionManager
 from .mission.mission_planner import MissionPlanner
 from .geofence.geofence_manager import GeofenceManager
 from .search.grid import generate_search_grid
@@ -43,6 +44,8 @@ class ILASCore:
         
         # Initialize components
         self.detector = ObstacleDetector(config.get('detection', {}))
+        self.fusion_manager = FusionManager(config.get('fusion', {}))
+        self.person_detector = PersonDetector(config.get('person_detection', {}))
         self.avoidance = AvoidanceSystem(config.get('avoidance', {}))
         self.landing = IntelligentLanding(config.get('landing', {}))
         self.controller = ControllerManager(config.get('controller', {}))
@@ -117,8 +120,10 @@ class ILASCore:
         current_position = fused_state[0:3]
         current_velocity = fused_state[3:6]
         
-        # Detect obstacles
-        obstacles = self.detector.detect_obstacles(sensor_data)
+        # Detect and fuse obstacles for a coherent environmental model
+        raw_obstacles = self.detector.detect_obstacles(sensor_data)
+        obstacles = self.fusion_manager.fuse_obstacles(raw_obstacles)
+        self.detector.set_obstacle_buffer(obstacles)  # Update detector with fused data
         
         # Calculate heading to target
         to_target = target_position - current_position
@@ -176,8 +181,10 @@ class ILASCore:
         )
         self.terrain_mapper.update(sensor_data, pose)
         
-        # Detect obstacles
-        obstacles = self.detector.detect_obstacles(sensor_data)
+        # Detect and fuse obstacles
+        raw_obstacles = self.detector.detect_obstacles(sensor_data)
+        obstacles = self.fusion_manager.fuse_obstacles(raw_obstacles)
+        self.detector.set_obstacle_buffer(obstacles)
         
         # Analyze landing area
         landing_sites = self.landing.analyze_landing_area(
@@ -227,8 +234,10 @@ class ILASCore:
         fused_state = self.sensor_fusion.get_state()
         current_position = fused_state[0:3]
         
-        # Detect obstacles
-        obstacles = self.detector.detect_obstacles(sensor_data)
+        # Detect and fuse obstacles
+        raw_obstacles = self.detector.detect_obstacles(sensor_data)
+        obstacles = self.fusion_manager.fuse_obstacles(raw_obstacles)
+        self.detector.set_obstacle_buffer(obstacles)
         
         # Calculate emergency landing position
         emergency_target = self.landing.emergency_landing(

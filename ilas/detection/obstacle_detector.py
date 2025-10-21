@@ -64,41 +64,44 @@ class ObstacleDetector:
         for sensor_config in sensor_configs:
             sensor_type = SensorType(sensor_config['type'])
             self.sensors[sensor_type] = sensor_config
-            if sensor_type == SensorType.ML_CAMERA:
-                self.ml_detector = MLObstacleDetector(sensor_config)
-
-    def detect_obstacles(self, sensor_data: Dict) -> List[Obstacle]:
-        """
-        Detect obstacles from sensor data
-        
-        Args:
-            sensor_data: Dictionary of sensor readings
             
-        Returns:
-            List of detected obstacles
+    def detect_obstacles(self, sensor_data: Dict) -> Dict[str, List[Obstacle]]:
         """
-        obstacles = []
+        Detect obstacles from sensor data, returning raw data per sensor.
+
+        Args:
+            sensor_data: Dictionary of sensor readings, keyed by sensor type string.
+
+        Returns:
+            A dictionary where keys are sensor types (e.g., 'lidar') and
+            values are lists of detected obstacles.
+        """
+        sensor_obstacles = {}
         
         for sensor_type_str, data in sensor_data.items():
             try:
-                sensor_type = SensorType(sensor_type_str)
-                if sensor_type in self.sensors:
-                    detected = self._process_sensor_data(sensor_type, data)
-                    obstacles.extend(detected)
+                sensor_type_enum = SensorType(sensor_type_str)
+                if sensor_type_enum in self.sensors:
+                    detected = self._process_sensor_data(sensor_type_enum, data)
+                    if detected:
+                        sensor_obstacles[sensor_type_str] = detected
             except ValueError:
-                print(f"Warning: Unknown sensor type '{sensor_type_str}'")
+                # Ignore sensor types not defined in the enum
+                continue
 
-        # Filter by confidence and merge close obstacles
-        obstacles = self._filter_obstacles(obstacles)
-        obstacles = self._merge_close_obstacles(obstacles)
+        return sensor_obstacles
+
+    def set_obstacle_buffer(self, obstacles: List[Obstacle]):
+        """
+        Update the internal obstacle buffer with a list of (fused) obstacles.
         
-        # Update obstacle buffer for tracking
+        Args:
+            obstacles: The list of obstacles to store.
+        """
         self.obstacle_buffer = obstacles
-        
-        return obstacles
-
-    def _process_sensor_data(self, sensor_type: SensorType,
-                             data: np.ndarray) -> List[Obstacle]:
+    
+    def _process_sensor_data(self, sensor_type: SensorType, 
+                            data: np.ndarray) -> List[Obstacle]:
         """Process data from specific sensor type"""
         obstacles = []
         
