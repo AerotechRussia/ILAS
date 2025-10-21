@@ -24,13 +24,16 @@ class Obstacle:
     """Represents a detected obstacle"""
     
     def __init__(self, position: np.ndarray, size: np.ndarray, 
-                 distance: float, confidence: float):
+                 distance: float, confidence: float, class_name: Optional[str] = None):
         self.position = position  # [x, y, z] in meters
         self.size = size  # [width, height, depth] in meters
         self.distance = distance  # distance from drone in meters
         self.confidence = confidence  # 0.0 to 1.0
+        self.class_name = class_name # Optional classification
         
     def __repr__(self):
+        if self.class_name:
+            return f"Obstacle(class='{self.class_name}', pos={self.position}, dist={self.distance:.2f}m, conf={self.confidence:.2f})"
         return f"Obstacle(pos={self.position}, dist={self.distance:.2f}m, conf={self.confidence:.2f})"
 
 
@@ -214,52 +217,67 @@ class ObstacleDetector:
             
         return obstacles
 
-    def _process_ml_camera(self, image: np.ndarray) -> List[Obstacle]:
-        """Process image data with the ML obstacle detector"""
+    def _process_ml_camera(self, data: Dict) -> List[Obstacle]:
+        """
+        Process image data with the ML obstacle detector and a depth map.
+
+        Args:
+            data: A dictionary containing 'image' and 'depth_map'
+        """
         if self.ml_detector is None:
             return []
 
-        logging.warning("Using simplified 2D to 3D projection for ML obstacles. "
-                        "This is not suitable for real-world navigation. "
-                        "A depth camera or stereo vision is recommended.")
+        image = data.get('image')
+        depth_map = data.get('depth_map')
+
+        if image is None or depth_map is None:
+            logging.warning("ML camera processing requires both an image and a depth map.")
+            return []
 
         ml_obstacles = self.ml_detector.detect(image)
         obstacles = []
 
-        focal_length = self.sensors.get(SensorType.ML_CAMERA, {}).get('focal_length', 500.0)
-
         for ml_obs in ml_obstacles:
             x1, y1, x2, y2 = ml_obs.bbox
-            bbox_width_pixels = x2 - x1
 
-            # Approximate distance using the focal length formula (simplified)
-            # Assumes a known object width of 1.0 meter for simplicity
-            if bbox_width_pixels > 0:
-                distance = (1.0 * focal_length) / bbox_width_pixels
-            else:
-                distance = self.detection_range
+            # Extract depth data for the bounding box
+            depth_roi = depth_map[y1:y2, x1:x2]
+            valid_depths = depth_roi[depth_roi < self.detection_range]
 
-            distance = np.clip(distance, 1.0, self.detection_range)
+            if valid_depths.size == 0:
+                continue
 
-            # Estimate position based on bbox center
+            # Calculate the median distance to the obstacle
+            median_distance = np.median(valid_depths)
+
+            # Estimate 3D position
             center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
+
+            # Simplified projection, assuming camera intrinsics are not available
+            # This is still an approximation, but better than the previous version
+            focal_length = self.sensors.get(SensorType.ML_CAMERA, {}).get('focal_length', 500.0)
             image_center_x = image.shape[1] / 2
-            angle = np.arctan((center_x - image_center_x) / focal_length)
+            image_center_y = image.shape[0] / 2
+
+            angle_x = np.arctan((center_x - image_center_x) / focal_length)
+            angle_y = np.arctan((center_y - image_center_y) / focal_length)
 
             position = np.array([
-                distance * np.cos(angle),
-                distance * np.sin(angle),
-                0  # Assume ground plane
+                median_distance * np.cos(angle_y),
+                median_distance * np.sin(angle_x),
+                -median_distance * np.sin(angle_y)
             ])
 
-            # Simplified size estimation
-            size = np.array([bbox_width_pixels / 100, (y2 - y1) / 100, 1.0])
+            # Estimate size based on the point cloud of the object
+            size = np.array([(x2 - x1) / 100, (y2 - y1) / 100, np.std(valid_depths) * 2])
 
             obstacle = Obstacle(
                 position=position,
                 size=size,
-                distance=distance,
-                confidence=ml_obs.confidence
+                distance=median_distance,
+                confidence=ml_obs.confidence,
+                class_name=ml_obs.class_name
             )
             obstacles.append(obstacle)
 

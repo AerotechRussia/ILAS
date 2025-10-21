@@ -64,3 +64,11 @@ geofence:
     - [100, 0]
     - [100, 100]
     - [0, 100]
+
+slam:
+  map_size_pixels: 500
+  map_size_meters: 10
+  scan_size: 360
+  scan_rate_hz: 10
+  detection_angle_degrees: 360
+  distance_no_detection_mm: 12000
