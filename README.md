@@ -4,47 +4,61 @@
 - [English](README_EN.md)
 - [Русский](README_RU.md)
 
-ILAS (Intelligent Landing and Avoidance System) is a comprehensive obstacle detection and avoidance system for VTOL (Vertical Take-Off and Landing) drones. The system provides intelligent landing capabilities on designated surfaces and supports multiple flight controller platforms.
+# ILAS - Intelligent Landing and Avoidance System
 
-Features
-Obstacle Detection
-Multi-sensor support (LiDAR, Camera, Ultrasonic, Radar, Depth Camera)
-Real-time obstacle detection and tracking
-Configurable detection range and confidence thresholds
-Sensor fusion for improved accuracy
-Obstacle Avoidance
-Multiple avoidance strategies:
-Artificial Potential Field
-Vector Field Histogram (VFH)
-Dynamic Window Approach (DWA)
-Rapidly-exploring Random Tree (RRT)
-Configurable safety margins
-Real-time path planning
-Dynamic obstacle handling
-Intelligent Landing
-Automatic landing site analysis
-Terrain evaluation (slope, roughness)
-Multiple landing modes:
-Precision landing on marked pads
-Terrain analysis landing
-Emergency landing
-Vertical descent
-Slope landing
-Trajectory planning for safe approach
-Controller Support
-PX4 flight controller
-ArduPilot flight controller
-Simulation mode for testing
-Extensible architecture for custom controllers
-Installation
+**ILAS** (Intelligent Landing and Avoidance System) is a comprehensive obstacle detection and avoidance system for VTOL (Vertical Take-Off and Landing) drones. The system provides intelligent landing capabilities on designated surfaces and supports multiple flight controller platforms.
+
+## Features
+
+###  Obstacle Detection
+- Multi-sensor support (LiDAR, Camera, Ultrasonic, Radar, Depth Camera)
+- Real-time obstacle detection and tracking
+- Configurable detection range and confidence thresholds
+- Sensor fusion for improved accuracy
+
+### Obstacle Avoidance
+- Multiple avoidance strategies:
+  - Artificial Potential Field
+  - Vector Field Histogram (VFH)
+  - Dynamic Window Approach (DWA)
+  - Rapidly-exploring Random Tree (RRT)
+- Configurable safety margins
+- Real-time path planning
+- Dynamic obstacle handling
+
+###  Intelligent Landing
+- Automatic landing site analysis
+- Terrain evaluation (slope, roughness)
+- Multiple landing modes:
+  - Precision landing on marked pads
+  - Terrain analysis landing
+  - Emergency landing
+  - Vertical descent
+  - Slope landing
+- Trajectory planning for safe approach
+
+###  Controller Support
+- **PX4** flight controller
+- **ArduPilot** flight controller
+- **Simulation mode** for testing
+- Extensible architecture for custom controllers
+
+## Installation
+
+```bash
 # Clone repository
 git clone https://github.com/AerotechRussia/ILAS.git
 cd ILAS
 
 # Install dependencies
 pip install -r requirements.txt
-Quick Start
-Basic Usage
+```
+
+## Quick Start
+
+### Basic Usage
+
+```python
 from ilas.core import ILASCore
 from ilas.utils.config import get_default_config
 
@@ -67,7 +81,11 @@ success = ilas.execute_landing(landing_center, search_radius=10.0, sensor_data={
 
 # Stop system
 ilas.stop()
-Command Line Interface
+```
+
+### Command Line Interface
+
+```bash
 # Run with default configuration
 python main.py
 
@@ -79,23 +97,33 @@ python main.py --mode mission --mission examples/mission_example.yaml
 
 # Run test scenario
 python main.py --mode test
-Interactive Mode
+```
+
+### Interactive Mode
+
+```bash
 python main.py --mode interactive
+```
+
 Available commands:
+- `status` - Show system status
+- `navigate` - Navigate to target position
+- `land` - Execute intelligent landing
+- `emergency` - Emergency landing
+- `help` - Show help
+- `quit` - Exit
 
-status - Show system status
-navigate - Navigate to target position
-land - Execute intelligent landing
-emergency - Emergency landing
-help - Show help
-quit - Exit
-Configuration
-ILAS uses YAML configuration files. See config/ directory for examples:
+## Configuration
 
-config_px4.yaml - Configuration for PX4 controller
-config_ardupilot.yaml - Configuration for ArduPilot
-config_simulation.yaml - Configuration for simulation
-Configuration Structure
+ILAS uses YAML configuration files. See `config/` directory for examples:
+
+- `config_px4.yaml` - Configuration for PX4 controller
+- `config_ardupilot.yaml` - Configuration for ArduPilot
+- `config_simulation.yaml` - Configuration for simulation
+
+### Configuration Structure
+
+```yaml
 detection:
   detection_range: 20.0        # Detection range in meters
   min_confidence: 0.6           # Minimum confidence threshold
@@ -120,15 +148,23 @@ controller:
   controller_type: px4          # Controller type
   connection_string: /dev/ttyUSB0
   baud_rate: 57600
-Examples
-See the examples/ directory:
+```
 
-basic_usage.py - Basic usage examples
-mission_example.yaml - Example mission configuration
+## Examples
+
+See the `examples/` directory:
+
+- `basic_usage.py` - Basic usage examples
+- `mission_example.yaml` - Example mission configuration
+
 Run examples:
-
+```bash
 python examples/basic_usage.py
-Architecture
+```
+
+## Architecture
+
+```
 ILAS/
 ├── ilas/
 │   ├── detection/           # Obstacle detection modules
@@ -149,71 +185,87 @@ ILAS/
 ├── main.py                  # Main entry point
 ├── requirements.txt         # Dependencies
 └── LICENSE                  # Proprietary license
-System Requirements
-Python 3.7+
-NumPy
-SciPy
-OpenCV (for camera support)
-PyMAVLink (for PX4/ArduPilot support)
-DroneKit (optional, for enhanced MAVLink support)
-Supported Hardware
-Flight Controllers
-PX4 (via MAVLink)
-ArduPilot (via MAVLink)
-DJI (via SDK)
-Custom controllers (extensible)
-Sensors
-LiDAR (point cloud)
-Cameras (RGB, depth)
-Ultrasonic sensors
-Radar
-Multi-sensor fusion
-Platforms
-Multirotor drones
-VTOL aircraft
-Fixed-wing with VTOL capability
-License
+```
+
+## System Requirements
+
+- Python 3.7+
+- NumPy
+- SciPy
+- OpenCV (for camera support)
+- PyMAVLink (for PX4/ArduPilot support)
+- DroneKit (optional, for enhanced MAVLink support)
+
+## Supported Hardware
+
+### Flight Controllers
+- PX4 (via MAVLink)
+- ArduPilot (via MAVLink)
+- DJI (via SDK)
+- Custom controllers (extensible)
+
+### Sensors
+- LiDAR (point cloud)
+- Cameras (RGB, depth)
+- Ultrasonic sensors
+- Radar
+- Multi-sensor fusion
+
+### Platforms
+- Multirotor drones
+- VTOL aircraft
+- Fixed-wing with VTOL capability
+
+## License
+
 Copyright (c) 2025 AerotechRussia. All rights reserved.
 
-This software is proprietary and confidential. It is provided for VIEWING PURPOSES ONLY.
+This software is proprietary and confidential. It is provided for **VIEWING PURPOSES ONLY**.
 
-See LICENSE file for full license terms.
+See [LICENSE](LICENSE) file for full license terms.
 
-RESTRICTIONS:
+**RESTRICTIONS:**
+- No permission to use, copy, modify, or distribute
+- Reverse engineering is strictly prohibited
+- Viewing only - no execution or deployment allowed
 
-No permission to use, copy, modify, or distribute
-Reverse engineering is strictly prohibited
-Viewing only - no execution or deployment allowed
 For licensing inquiries, contact: AerotechRussia
 
-Safety Notice
-IMPORTANT SAFETY NOTICE
+## Safety Notice
+
+ **IMPORTANT SAFETY NOTICE**
 
 This is an autonomous flight system. Always:
+- Test in simulation first
+- Follow local aviation regulations
+- Maintain manual override capability
+- Monitor the system during operation
+- Ensure adequate safety margins
+- Have emergency procedures in place
+- Never fly over people or restricted areas
 
-Test in simulation first
-Follow local aviation regulations
-Maintain manual override capability
-Monitor the system during operation
-Ensure adequate safety margins
-Have emergency procedures in place
-Never fly over people or restricted areas
 The developers assume no liability for misuse or accidents.
 
-Support
+## Support
+
 For questions and support, please contact AerotechRussia.
 
-Note: This is proprietary software. Support is provided only to licensed users.
+**Note:** This is proprietary software. Support is provided only to licensed users.
 
-Version
+## Version
+
 Current Version: 1.0.0
 
-Development Status
-✅ Core obstacle detection system
-✅ Multiple avoidance algorithms
-✅ Intelligent landing system
-✅ Multi-controller support
-✅ Configuration system
-✅ Command-line interface
-✅ Documentation
-Copyright (c) 2025 AerotechRussia. All Rights Reserved.
+## Development Status
+
+- ✅ Core obstacle detection system
+- ✅ Multiple avoidance algorithms
+- ✅ Intelligent landing system
+- ✅ Multi-controller support
+- ✅ Configuration system
+- ✅ Command-line interface
+- ✅ Documentation
+
+---
+
+**Copyright (c) 2025 AerotechRussia. All Rights Reserved.**
